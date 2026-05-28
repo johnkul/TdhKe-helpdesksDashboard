@@ -19,7 +19,7 @@ st.set_page_config(
 LOGO_PATH = Path("./assets/tdh-logo.png")
 
 # Source file and dashboard constants
-DATA_FILE_PATH = Path("./data/HELPDESK_DashboardData_Tdh_Kenya_D1.xlsx")
+DATA_FILE_PATH = Path("./data/HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx")
 
 PII_COLUMNS = [
     "staff_name",
