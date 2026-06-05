@@ -15,22 +15,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Source path for the dashboard logo
-LOGO_PATH = Path("./assets/tdh-logo.png")
-
-# Source file and dashboard constants
-DATA_FILE_PATH = Path("./data/HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx")
+# Source paths
+BASE_DIR = Path(__file__).resolve().parent
+LOGO_PATH = BASE_DIR / "assets" / "tdh-logo.png"
+DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 
 PII_COLUMNS = [
-    "staff_name",
     "information_seeker_name",
     "residence_neighborhood_compound_house",
     "information_seeker_phone",
     "alternative_phone",
     "information_seeker_individual_number",
     "information_seeker_ration_or_wristband_number",
-    "gps_latitude",
-    "gps_longitude",
 ]
 
 AGE_GROUP_ORDER = [
@@ -82,6 +78,9 @@ CORE_RECORD_COLUMNS = [
     "interview_date",
     "camp_location",
     "helpdesk_location",
+    "staff_name",
+    "gps_latitude",
+    "gps_longitude",
     "information_seeker_type",
     "information_seeker_gender",
     "age_group",
@@ -94,6 +93,21 @@ CORE_RECORD_COLUMNS = [
     "referral_status",
     "follow_up_required_clean",
 ]
+
+
+# Dataset cache signature
+def data_file_signature(path):
+    path = Path(path)
+
+    if not path.exists():
+        return None
+
+    stat = path.stat()
+    return (
+        str(path.resolve()),
+        stat.st_mtime_ns,
+        stat.st_size,
+    )
 
 
 # Visual theme and custom Streamlit styling
@@ -373,8 +387,8 @@ def build_label_map(mapping, prefix):
 
 
 # Data loading, reshaping, and KPI preparation
-@st.cache_data
-def load_data():
+@st.cache_data(show_spinner="Loading latest helpdesk dataset...")
+def load_data(file_signature):
     if not DATA_FILE_PATH.exists():
         st.error(f"File not found: {DATA_FILE_PATH}")
         st.stop()
@@ -391,6 +405,11 @@ def load_data():
 
     records["interview_date"] = pd.to_datetime(records["interview_date"], errors="coerce")
     records["referral_date"] = pd.to_datetime(records["referral_date"], errors="coerce")
+
+    records["gps_latitude"] = pd.to_numeric(records["gps_latitude"], errors="coerce")
+    records["gps_longitude"] = pd.to_numeric(records["gps_longitude"], errors="coerce")
+    records["staff_name"] = records["staff_name"].map(clean_text)
+    records["staff_name"] = records["staff_name"].fillna("[Not recorded]")
 
     records["year"] = records["interview_date"].dt.year
     records["month_number"] = records["interview_date"].dt.month
@@ -474,6 +493,9 @@ def load_data():
         "year_month",
         "camp_location",
         "helpdesk_location",
+        "staff_name",
+        "gps_latitude",
+        "gps_longitude",
         "information_seeker_type",
         "information_seeker_gender",
         "age_group",
@@ -562,6 +584,8 @@ def load_data():
                 "follow_up_required_records",
                 "type_age_corrections",
                 "gender_age_corrections",
+                "mapped_gps_records",
+                "staff_recorded_records",
             ],
             "value": [
                 len(dashboard_records),
@@ -573,6 +597,8 @@ def load_data():
                 dashboard_records["follow_up_required_clean"].eq("Yes").sum(),
                 dashboard_records["type_age_correction_flag"].sum(),
                 dashboard_records["gender_age_correction_flag"].sum(),
+                dashboard_records[["gps_latitude", "gps_longitude"]].notna().all(axis=1).sum(),
+                dashboard_records["staff_name"].ne("[Not recorded]").sum(),
             ],
         }
     )
@@ -826,6 +852,7 @@ def style_records_table(table):
         col for col in display_table.columns
         if "date" in col.lower()
     ]
+
     numeric_columns = display_table.select_dtypes(include="number").columns.tolist()
 
     formatters = {
@@ -836,7 +863,12 @@ def style_records_table(table):
         )
         for col in date_columns
     }
-    formatters.update({col: "{:,.0f}" for col in numeric_columns})
+
+    for col in numeric_columns:
+        if "latitude" in col.lower() or "longitude" in col.lower():
+            formatters[col] = "{:,.6f}"
+        else:
+            formatters[col] = "{:,.0f}"
 
     def zebra_rows(row):
         background = "#FFFFFF" if row.name % 2 == 0 else "#F7FAF8"
@@ -870,7 +902,7 @@ def style_records_table(table):
     )
 
 
-# Chart and table rendering helpers
+# Chart, map, and table rendering helpers
 def show_gender_table(frame, category_column, category_label, top_n=None):
     table = gender_pivot_table(frame, category_column, category_label, top_n=top_n)
 
@@ -898,6 +930,35 @@ def gender_wide_chart_data(frame, category_column, top_n=None):
         chart_data = chart_data.drop(columns="Total")
 
     return chart_data
+
+
+def map_data(frame):
+    if frame.empty:
+        return pd.DataFrame()
+
+    required_columns = ["gps_latitude", "gps_longitude"]
+
+    if not all(col in frame.columns for col in required_columns):
+        return pd.DataFrame()
+
+    mapped = frame.dropna(subset=required_columns).copy()
+
+    mapped = mapped[
+        mapped["gps_latitude"].between(-90, 90)
+        & mapped["gps_longitude"].between(-180, 180)
+    ]
+
+    if mapped.empty:
+        return pd.DataFrame()
+
+    mapped = mapped.rename(
+        columns={
+            "gps_latitude": "lat",
+            "gps_longitude": "lon",
+        }
+    )
+
+    return mapped
 
 
 def draw_gender_bar(frame, category_column, top_n=None, height=430):
@@ -1156,7 +1217,12 @@ def search_records(frame, query):
 # Load source data and prepare date boundaries
 inject_theme_css()
 
-records, protection, information, referrals, kpis = load_data()
+if st.sidebar.button("Reload dataset", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+file_signature = data_file_signature(DATA_FILE_PATH)
+records, protection, information, referrals, kpis = load_data(file_signature)
 
 if records.empty:
     st.error("No valid dashboard records were found in the source file.")
@@ -1182,6 +1248,18 @@ sanitize_date_state("to_date_filter", calendar_min_date, calendar_max_date, max_
 # Sidebar filters
 # Filter order is intentionally cascading: Camp -> Helpdesk -> Information seeker -> Gender -> Age -> Request
 with st.sidebar:
+    st.caption(f"Data file: {DATA_FILE_PATH.name}")
+
+    if DATA_FILE_PATH.exists():
+        last_modified = pd.to_datetime(DATA_FILE_PATH.stat().st_mtime, unit="s")
+        st.caption(f"Last modified: {last_modified.strftime('%d %b %Y %H:%M:%S')}")
+        st.caption(f"File size: {DATA_FILE_PATH.stat().st_size:,} bytes")
+
+    st.caption(f"Loaded records: {len(records):,}")
+    st.caption(
+        f"Loaded date range: {records['interview_date'].min().date()} to {records['interview_date'].max().date()}"
+    )
+
     st.header("Filters")
 
     st.button(
@@ -1480,8 +1558,8 @@ st.divider()
 
 
 # Dashboard tabs
-tab_overview, tab_concerns, tab_information, tab_referrals, tab_data = st.tabs(
-    ["Overview", "Concerns", "Information", "Referrals", "Records"]
+tab_overview, tab_concerns, tab_information, tab_referrals, tab_map, tab_data = st.tabs(
+    ["Overview", "Concerns", "Information", "Referrals", "Map", "Records"]
 )
 
 
@@ -1631,6 +1709,60 @@ with tab_referrals:
         "Referral partner",
         top_n=referral_top_n,
     )
+
+
+# Map tab
+with tab_map:
+    st.subheader("Helpdesk Locations Map")
+    st.markdown(
+        '<div class="section-note">GPS coordinates represent helpdesk locations, not individual information seekers.</div>',
+        unsafe_allow_html=True,
+    )
+
+    mapped_records = map_data(filtered_records)
+
+    if mapped_records.empty:
+        st.info("No valid GPS coordinates are available for the selected filters.")
+    else:
+        st.map(
+            mapped_records[["lat", "lon"]],
+            use_container_width=True,
+        )
+
+        map_summary = (
+            mapped_records.groupby(
+                ["camp_location", "helpdesk_location", "lat", "lon"],
+                dropna=False,
+            )
+            .size()
+            .reset_index(name="records")
+            .sort_values("records", ascending=False)
+        )
+
+        staff_summary = (
+            filtered_records.groupby("staff_name", dropna=False)
+            .size()
+            .reset_index(name="records")
+            .sort_values("records", ascending=False)
+        )
+
+        map_cols = st.columns(2)
+
+        with map_cols[0]:
+            st.subheader("Mapped Helpdesk Points")
+            st.dataframe(
+                style_records_table(map_summary),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        with map_cols[1]:
+            st.subheader("Records by Staff")
+            st.dataframe(
+                style_records_table(staff_summary),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 # Records tab
