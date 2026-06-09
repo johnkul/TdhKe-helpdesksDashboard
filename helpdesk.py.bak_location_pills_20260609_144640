@@ -2602,38 +2602,6 @@ def show_footer():
     )
 
 
-def multi_choice_selector(label, options, key, help_text=None):
-    options = list(options)
-
-    if not options:
-        st.session_state[key] = []
-        st.caption(f"No {label.lower()} options are available for the current selection.")
-        return []
-
-    current = st.session_state.get(key, [])
-    cleaned = [value for value in current if value in options]
-
-    if cleaned != current:
-        st.session_state[key] = cleaned
-
-    if hasattr(st, "pills"):
-        selected = st.pills(
-            label,
-            options,
-            selection_mode="multi",
-            key=key,
-            help=help_text,
-        )
-        return selected or []
-
-    return st.multiselect(
-        label,
-        options,
-        key=key,
-        help=help_text,
-    )
-
-
 def filter_label(values, max_items=3):
     if not values:
         return "All"
@@ -2768,11 +2736,10 @@ with st.sidebar:
         camp_options = filter_options(date_filtered_records["camp_location"])
         sanitize_multiselect_state("camp_location_filter", camp_options)
 
-        selected_camp_locations = multi_choice_selector(
+        selected_camp_locations = st.multiselect(
             "Camp location",
             camp_options,
             key="camp_location_filter",
-            help_text="Select one or more camp locations to unlock linked helpdesk and demographic filters.",
         )
 
         if not selected_camp_locations:
@@ -2785,11 +2752,10 @@ with st.sidebar:
             helpdesk_options = filter_options(camp_filtered_records["helpdesk_location"])
             sanitize_multiselect_state("helpdesk_location_filter", helpdesk_options)
 
-            selected_helpdesk_locations = multi_choice_selector(
+            selected_helpdesk_locations = st.multiselect(
                 "Helpdesk location",
                 helpdesk_options,
                 key="helpdesk_location_filter",
-                help_text="Select one or more helpdesk locations within the selected camp location.",
             )
 
     if not selected_camp_locations:
