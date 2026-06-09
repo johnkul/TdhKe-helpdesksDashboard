@@ -162,6 +162,7 @@ CORE_RECORD_COLUMNS = [
     "follow_up_required_clean",
 ]
 
+RECORD_PREVIEW_LIMIT = 1000
 
 # Visual theme and custom Streamlit styling
 def inject_theme_css():
@@ -2773,13 +2774,16 @@ st.divider()
 
 
 # Dashboard tabs
-tab_overview, tab_disability, tab_concerns, tab_information, tab_referrals, tab_map, tab_data = st.tabs(
-    ["Overview", "Disability", "Concerns", "Information", "Referrals", "Map", "Records"]
+selected_tab = st.radio(
+    "Dashboard section",
+    ["Overview", "Disability", "Concerns", "Information", "Referrals", "Map", "Records"],
+    horizontal=True,
+    label_visibility="collapsed",
 )
 
 
 # Overview tab
-with tab_overview:
+if selected_tab == "Overview":
     left, right = st.columns([1.2, 1])
 
     with left:
@@ -2827,7 +2831,7 @@ with tab_overview:
 
 
 # Protection concerns tab
-with tab_concerns:
+if selected_tab == "Concerns":
     st.subheader("Top Protection Concerns by gender")
 
     concern_top_n = st.radio(
@@ -2879,7 +2883,7 @@ with tab_concerns:
 
 
 # Information needs tab
-with tab_information:
+if selected_tab == "Information":
     st.subheader("Top General Information Needs by Gender")
 
     information_top_n = st.radio(
@@ -2931,7 +2935,7 @@ with tab_information:
 
 
 # Referrals tab
-with tab_referrals:
+if selected_tab == "Referrals":
     st.subheader("Action and Follow-up by Gender")
 
     st.caption("Referral status")
@@ -2970,7 +2974,7 @@ with tab_referrals:
 
 
 # Disability tab
-with tab_disability:
+if selected_tab == "Disability":
     st.subheader("Disability Analysis")
     st.markdown(
         '<div class="section-note">Status labels remain Has Disability / No Disability. Specific types are standardized as impairments and shared across adults and children.</div>',
@@ -3097,7 +3101,7 @@ with tab_disability:
 
 
 # Map tab
-with tab_map:
+if selected_tab == "Map":
     st.subheader("Helpdesk Locations Map")
     st.markdown(
         '<div class="section-note">GPS coordinates represent helpdesk locations, not individual information seekers.</div>',
@@ -3148,7 +3152,7 @@ with tab_map:
 
 
 # Records tab
-with tab_data:
+if selected_tab == "Records":
     st.subheader("Filtered Records")
 
     ordered_columns = [
@@ -3179,13 +3183,16 @@ with tab_data:
 
     searched_records = search_records(filtered_records, query)
 
+    preview_records = searched_records[selected_columns].head(RECORD_PREVIEW_LIMIT)
+
     st.caption(
-        f"Showing {format_number(len(searched_records))} matching records "
-        f"from {format_number(len(filtered_records))} filtered records."
+        f"Showing {format_number(len(preview_records))} preview records "
+        f"from {format_number(len(searched_records))} matching records. "
+        f"The download still includes all matching records."
     )
 
     st.dataframe(
-        style_records_table(searched_records[selected_columns]),
+        style_records_table(preview_records),
         use_container_width=True,
         hide_index=True,
     )
