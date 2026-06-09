@@ -15,11 +15,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
 # Source paths
 BASE_DIR = Path(__file__).resolve().parent
 LOGO_PATH = BASE_DIR / "assets" / "tdh-logo.png"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 
+
+# Source file and dashboard constants
 PII_COLUMNS = [
     "information_seeker_name",
     "residence_neighborhood_compound_house",
@@ -40,12 +43,7 @@ AGE_GROUP_ORDER = [
     "[Missing]",
 ]
 
-CHILD_AGE_GROUPS = {
-    "0-5 Years",
-    "6-11 Years",
-    "12-17 Years",
-}
-
+CHILD_AGE_GROUPS = {"0-5 Years", "6-11 Years", "12-17 Years"}
 ADULT_AGE_GROUPS = {
     "18-35 Years",
     "36-49 Years",
@@ -64,6 +62,58 @@ GENDER_COLORS = {
     "[Missing]": "#9CA3AF",
 }
 
+WGQ_DISABILITY_DOMAINS = {
+    "difficulty_seeing": "Visual Impairment",
+    "difficulty_hearing": "Hearing Impairment",
+    "difficulty_walking_or_climbing": "Physical/Mobility Impairment",
+    "difficulty_walking_or_climbing_steps": "Physical/Mobility Impairment",
+    "difficulty_remembering_or_concentrating": "Cognitive Impairment",
+    "difficulty_self_care": "Self-Care Impairment",
+    "difficulty_communicating": "Speech Impairment",
+}
+
+ADULT_DISABILITY_CATEGORY_COLUMNS = [
+    "information_seeker_disability_type_other",
+]
+
+DISABILITY_TYPE_STANDARD_MAP = {
+    "visual impairment": "Visual Impairment",
+    "visual disability": "Visual Impairment",
+    "seeing impairment": "Visual Impairment",
+    "seeing disability": "Visual Impairment",
+    "hearing impairment": "Hearing Impairment",
+    "hearing disability": "Hearing Impairment",
+    "physical disability": "Physical/Mobility Impairment",
+    "physical impairment": "Physical/Mobility Impairment",
+    "physical/mobility disability": "Physical/Mobility Impairment",
+    "physical/mobility impairment": "Physical/Mobility Impairment",
+    "mobility disability": "Physical/Mobility Impairment",
+    "mobility impairment": "Physical/Mobility Impairment",
+    "walking disability": "Physical/Mobility Impairment",
+    "walking impairment": "Physical/Mobility Impairment",
+    "cognitive impairment": "Cognitive Impairment",
+    "cognitive disability": "Cognitive Impairment",
+    "remembering or concentrating difficulty": "Cognitive Impairment",
+    "remembering/concentrating difficulty": "Cognitive Impairment",
+    "self-care disability": "Self-Care Impairment",
+    "self-care impairment": "Self-Care Impairment",
+    "self care disability": "Self-Care Impairment",
+    "self care impairment": "Self-Care Impairment",
+    "communication disability": "Speech Impairment",
+    "communication impairment": "Speech Impairment",
+    "speech impairment": "Speech Impairment",
+    "speech disability": "Speech Impairment",
+    "speech difficulty": "Speech Impairment",
+    "autism": "Cognitive Impairment",
+    "adhd": "Cognitive Impairment",
+    "neurological impairment": "Cognitive Impairment",
+    "neurological impairments": "Cognitive Impairment",
+    "multiple disabilities": "Multiple Impairments",
+    "multiple disability": "Multiple Impairments",
+    "multiple impairments": "Multiple Impairments",
+    "multiple impairment": "Multiple Impairments",
+}
+
 FILTER_KEYS = [
     "camp_location_filter",
     "helpdesk_location_filter",
@@ -78,6 +128,7 @@ CORE_RECORD_COLUMNS = [
     "interview_date",
     "camp_location",
     "helpdesk_location",
+    "household_type",
     "staff_name",
     "gps_latitude",
     "gps_longitude",
@@ -89,25 +140,27 @@ CORE_RECORD_COLUMNS = [
     "information_seeker_gender_raw",
     "type_age_correction_flag",
     "gender_age_correction_flag",
+    "disability_status",
+    "disability_type",
+    "adult_wgq_disability_status",
+    "adult_wgq_disability_type",
+    "adult_wgq_disability_domains",
+    "adult_wgq_domain_count",
+    "adult_wgq_impairment_count",
+    "adult_duplicate_impairment_mentions",
+    "adult_wgq_domain_count_category",
+    "adult_wgq_multiplicity",
+    "adult_wgq_max_score",
+    "adult_wgq_severity",
+    "adult_disability_exclusion_risk",
+    "adult_additional_disability_category",
+    "child_disability_status",
+    "child_disability_type",
+    "child_disability_type_other",
     "request_category",
     "referral_status",
     "follow_up_required_clean",
 ]
-
-
-# Dataset cache signature
-def data_file_signature(path):
-    path = Path(path)
-
-    if not path.exists():
-        return None
-
-    stat = path.stat()
-    return (
-        str(path.resolve()),
-        stat.st_mtime_ns,
-        stat.st_size,
-    )
 
 
 # Visual theme and custom Streamlit styling
@@ -291,51 +344,76 @@ def clean_text(value):
     return pd.NA if value == "" else " ".join(value.split())
 
 
-def age_group_life_stage(age_group):
-    age_group = clean_text(age_group)
+def normalize_response(value):
+    value = clean_text(value)
 
-    if pd.isna(age_group):
-        return pd.NA
+    if pd.isna(value):
+        return None
 
-    if age_group in CHILD_AGE_GROUPS:
-        return "Child"
+    value = str(value).strip().lower()
+    value = value.replace("_", " ")
+    value = value.replace("-", " ")
+    value = re.sub(r"\s+", " ", value)
 
-    if age_group in ADULT_AGE_GROUPS:
-        return "Adult"
-
-    value = str(age_group).lower()
-    numbers = [int(number) for number in re.findall(r"\d+", value)]
-
-    if numbers:
-        first_age = numbers[0]
-        return "Child" if first_age < 18 else "Adult"
-
-    return pd.NA
+    return value
 
 
-def normalize_gender_by_life_stage(gender, life_stage):
-    gender = clean_text(gender)
-    life_stage = clean_text(life_stage)
+def standardize_disability_type(value):
+    value = clean_text(value)
 
-    if pd.isna(gender):
-        return "[Missing]"
+    if pd.isna(value):
+        return "None"
 
-    if pd.isna(life_stage):
-        return gender
+    normalized = normalize_response(value)
 
-    if life_stage == "Adult":
-        return {
-            "Girl": "Woman",
-            "Boy": "Man",
-        }.get(gender, gender)
+    if normalized in [
+        "none",
+        "none of the above",
+        "no",
+        "not applicable",
+        "n/a",
+        "na",
+        "nil",
+    ]:
+        return "None"
 
-    if life_stage == "Child":
-        return {
-            "Woman": "Girl",
-            "Man": "Boy",
-        }.get(gender, gender)
+    if normalized in DISABILITY_TYPE_STANDARD_MAP:
+        return DISABILITY_TYPE_STANDARD_MAP[normalized]
 
-    return gender
+    if "multiple" in normalized:
+        return "Multiple Impairments"
+
+    if "visual" in normalized or "seeing" in normalized:
+        return "Visual Impairment"
+
+    if "hearing" in normalized:
+        return "Hearing Impairment"
+
+    if (
+        "physical" in normalized
+        or "mobility" in normalized
+        or "walking" in normalized
+        or "climbing" in normalized
+    ):
+        return "Physical/Mobility Impairment"
+
+    if (
+        "cognitive" in normalized
+        or "remember" in normalized
+        or "concentrat" in normalized
+        or "autism" in normalized
+        or "adhd" in normalized
+        or "neurological" in normalized
+    ):
+        return "Cognitive Impairment"
+
+    if "self care" in normalized or "self-care" in normalized:
+        return "Self-Care Impairment"
+
+    if "speech" in normalized or "communication" in normalized or "communicat" in normalized:
+        return "Speech Impairment"
+
+    return str(value)
 
 
 def safe_label_from_code(value):
@@ -386,6 +464,624 @@ def build_label_map(mapping, prefix):
     return label_map
 
 
+# Dataset freshness helper for Streamlit cache
+def data_file_signature(path):
+    if not path.exists():
+        return str(path), None, None, None
+
+    stat = path.stat()
+    return (
+        str(path.resolve()),
+        stat.st_mtime_ns,
+        stat.st_size,
+        pd.to_datetime(stat.st_mtime, unit="s").strftime("%d %b %Y %H:%M:%S"),
+    )
+
+
+# Linked form and derived demographic helpers
+def age_group_life_stage(age_group):
+    age_group = clean_text(age_group)
+
+    if pd.isna(age_group):
+        return pd.NA
+
+    if age_group in CHILD_AGE_GROUPS:
+        return "Child"
+
+    if age_group in ADULT_AGE_GROUPS:
+        return "Adult"
+
+    numbers = [int(number) for number in re.findall(r"\d+", str(age_group))]
+
+    if numbers:
+        return "Child" if numbers[0] < 18 else "Adult"
+
+    return pd.NA
+
+
+def normalize_gender_by_life_stage(gender, life_stage):
+    gender = clean_text(gender)
+    life_stage = clean_text(life_stage)
+
+    if pd.isna(gender):
+        return "[Missing]"
+
+    if pd.isna(life_stage):
+        return gender
+
+    if life_stage == "Adult":
+        return {"Girl": "Woman", "Boy": "Man"}.get(gender, gender)
+
+    if life_stage == "Child":
+        return {"Woman": "Girl", "Man": "Boy"}.get(gender, gender)
+
+    return gender
+
+
+def is_host_community(value):
+    value = normalize_response(value)
+
+    if value is None:
+        return False
+
+    return "host" in value and "community" in value
+
+
+def derive_linked_helpdesk_location(row):
+    household_type = row.get("household_type")
+    camp_location = clean_text(row.get("camp_location"))
+    helpdesk_camp = clean_text(row.get("helpdesk_camp_location"))
+    helpdesk_village = clean_text(row.get("helpdesk_village"))
+
+    if is_host_community(household_type):
+        if not pd.isna(camp_location):
+            return f"Host community - {camp_location}"
+        return "Host community"
+
+    if not pd.isna(helpdesk_camp):
+        return helpdesk_camp
+
+    if not pd.isna(helpdesk_village):
+        return helpdesk_village
+
+    return "[Not recorded]"
+
+
+# Disability derivation helpers
+def is_adult(row):
+    age_group = clean_text(row.get("age_group"))
+
+    if not pd.isna(age_group):
+        return age_group in ADULT_AGE_GROUPS
+
+    return normalize_response(row.get("information_seeker_type")) == "adult"
+
+
+def is_child(row):
+    age_group = clean_text(row.get("age_group"))
+
+    if not pd.isna(age_group):
+        return age_group in CHILD_AGE_GROUPS
+
+    return normalize_response(row.get("information_seeker_type")) == "child"
+
+
+def wgq_score(value):
+    if pd.isna(value):
+        return None
+
+    if isinstance(value, (int, float)) and not pd.isna(value):
+        score = int(value)
+        if score in [1, 2, 3, 4]:
+            return score
+
+    response = normalize_response(value)
+
+    if response is None:
+        return None
+
+    response = response.replace("can not", "cannot")
+
+    if response.startswith("1") or response == "no difficulty":
+        return 1
+
+    if response.startswith("2") or response == "some difficulty":
+        return 2
+
+    if response.startswith("3") or response == "a lot of difficulty":
+        return 3
+
+    if response.startswith("4") or response == "cannot do at all":
+        return 4
+
+    return None
+
+
+def adult_wgq_domain_scores(row):
+    scores = {}
+
+    if not is_adult(row):
+        return scores
+
+    for column, impairment_type in WGQ_DISABILITY_DOMAINS.items():
+        if column not in row.index:
+            continue
+
+        score = wgq_score(row[column])
+
+        if score is None:
+            continue
+
+        standardized_type = standardize_disability_type(impairment_type)
+
+        if standardized_type not in scores:
+            scores[standardized_type] = score
+        else:
+            scores[standardized_type] = max(scores[standardized_type], score)
+
+    return scores
+
+
+def derive_adult_wgq_disability_domains(row):
+    scores = adult_wgq_domain_scores(row)
+
+    impairment_types = [
+        impairment_type
+        for impairment_type, score in scores.items()
+        if score in [3, 4]
+    ]
+
+    impairment_types = sorted(set(impairment_types))
+
+    if impairment_types:
+        return "; ".join(impairment_types)
+
+    return "None"
+
+
+def derive_adult_additional_disability_category(row):
+    if not is_adult(row):
+        return "None"
+
+    for column in ADULT_DISABILITY_CATEGORY_COLUMNS:
+        if column not in row.index:
+            continue
+
+        standardized_value = standardize_disability_type(row[column])
+
+        if standardized_value != "None":
+            return standardized_value
+
+    return "None"
+
+
+def derive_adult_disability_domains(row):
+    impairment_types = []
+
+    wgq_domains = derive_adult_wgq_disability_domains(row)
+    additional_category = derive_adult_additional_disability_category(row)
+
+    if wgq_domains != "None":
+        impairment_types.extend(
+            [standardize_disability_type(value) for value in wgq_domains.split("; ")]
+        )
+
+    if additional_category != "None":
+        impairment_types.append(standardize_disability_type(additional_category))
+
+    impairment_types = sorted(set(value for value in impairment_types if value != "None"))
+
+    if impairment_types:
+        return "; ".join(impairment_types)
+
+    return "None"
+
+
+def split_impairment_types(value):
+    if pd.isna(value):
+        return []
+
+    value = str(value).strip()
+
+    if value in ["", "None", "No Disability", "[Missing]"]:
+        return []
+
+    impairment_types = [item.strip() for item in value.split(";") if item.strip()]
+    standardized_types = [standardize_disability_type(item) for item in impairment_types]
+
+    return list(dict.fromkeys(item for item in standardized_types if item != "None"))
+
+
+def adult_row_impairment_types(row):
+    if not is_adult(row):
+        return []
+
+    return split_impairment_types(derive_adult_disability_domains(row))
+
+
+def derive_adult_wgq_disability_status(row):
+    if adult_row_impairment_types(row):
+        return "Has Disability"
+
+    return "No Disability"
+
+
+def derive_adult_wgq_disability_type(row):
+    impairment_types = adult_row_impairment_types(row)
+
+    if not impairment_types:
+        return "No Disability"
+
+    if len(impairment_types) > 1:
+        return "Multiple Impairments"
+
+    return impairment_types[0]
+
+
+def derive_adult_wgq_domain_count(row):
+    return len(adult_row_impairment_types(row))
+
+
+def derive_adult_wgq_impairment_count(row):
+    return derive_adult_wgq_domain_count(row)
+
+
+def derive_adult_duplicate_impairment_mentions(row):
+    return max(derive_adult_wgq_impairment_count(row) - 1, 0)
+
+
+def derive_adult_wgq_multiplicity(row):
+    count = derive_adult_wgq_domain_count(row)
+
+    if count == 0:
+        return "No Disability"
+
+    if count == 1:
+        return "One Impairment"
+
+    return "Multiple Impairments"
+
+
+def derive_adult_wgq_domain_count_category(row):
+    count = derive_adult_wgq_domain_count(row)
+
+    if count == 0:
+        return "No Disability"
+
+    if count == 1:
+        return "One Impairment"
+
+    if count == 2:
+        return "Two Impairments"
+
+    return "Three or More Impairments"
+
+
+def derive_adult_wgq_max_score(row):
+    scores = adult_wgq_domain_scores(row)
+
+    if not scores:
+        return 1
+
+    return max(scores.values())
+
+
+def derive_adult_wgq_severity(row):
+    max_score = derive_adult_wgq_max_score(row)
+
+    if max_score in [1, 2]:
+        return "No Disability"
+
+    if max_score == 3:
+        return "Disability"
+
+    if max_score == 4:
+        return "Severe Disability"
+
+    return "No Disability"
+
+
+def derive_adult_disability_exclusion_risk(row):
+    scores = adult_wgq_domain_scores(row)
+
+    if any(score in [2, 3, 4] for score in scores.values()):
+        return "At risk of disability-related exclusion"
+
+    if derive_adult_additional_disability_category(row) != "None":
+        return "At risk of disability-related exclusion"
+
+    return "Not at risk"
+
+
+def derive_child_disability_status(row):
+    if not is_child(row):
+        return "No Disability"
+
+    response = normalize_response(row.get("has_disability"))
+
+    if response in ["yes", "y", "true", "1"]:
+        return "Has Disability"
+
+    return "No Disability"
+
+
+def derive_child_disability_type(row):
+    if not is_child(row):
+        return "No Disability"
+
+    if derive_child_disability_status(row) != "Has Disability":
+        return "No Disability"
+
+    disability_type = clean_text(row.get("child_disability_type"))
+    disability_type_other = clean_text(row.get("child_disability_type_other"))
+
+    if not pd.isna(disability_type):
+        normalized_type = normalize_response(disability_type)
+
+        if normalized_type not in [
+            "other",
+            "others",
+            "other specify",
+            "other specified",
+            "none",
+            "none of the above",
+            "not applicable",
+            "n/a",
+            "na",
+        ]:
+            return standardize_disability_type(disability_type)
+
+    if not pd.isna(disability_type_other):
+        normalized_other = normalize_response(disability_type_other)
+
+        if normalized_other not in [
+            "none",
+            "none of the above",
+            "not applicable",
+            "n/a",
+            "na",
+            "nil",
+        ]:
+            return standardize_disability_type(disability_type_other)
+
+    return "Not specified"
+
+
+def derive_combined_disability_status(row):
+    if is_adult(row):
+        return row.get("adult_wgq_disability_status", "No Disability")
+
+    if is_child(row):
+        return row.get("child_disability_status", "No Disability")
+
+    return "No Disability"
+
+
+def derive_combined_disability_type(row):
+    if is_adult(row):
+        return row.get("adult_wgq_disability_type", "No Disability")
+
+    if is_child(row):
+        return row.get("child_disability_type", "No Disability")
+
+    return "No Disability"
+
+
+def adult_wgq_disability_long(frame):
+    rows = []
+
+    if frame.empty:
+        return pd.DataFrame()
+
+    adult_frame = frame[frame["derived_life_stage"].astype(str).eq("Adult")].copy()
+
+    for _, row in adult_frame.iterrows():
+        seen_types = set()
+
+        for column, impairment_type in WGQ_DISABILITY_DOMAINS.items():
+            if column not in row.index:
+                continue
+
+            score = wgq_score(row[column])
+
+            if score not in [3, 4]:
+                continue
+
+            standardized_type = standardize_disability_type(impairment_type)
+
+            if standardized_type in seen_types:
+                continue
+
+            seen_types.add(standardized_type)
+
+            rows.append(
+                {
+                    "record_id": row.get("record_id"),
+                    "interview_date": row.get("interview_date"),
+                    "camp_location": row.get("camp_location"),
+                    "helpdesk_location": row.get("helpdesk_location"),
+                    "information_seeker_gender": row.get("information_seeker_gender"),
+                    "age_group": row.get("age_group"),
+                    "wgq_domain_column": column,
+                    "wgq_disability_type": standardized_type,
+                    "wgq_score": score,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def adult_specific_disability_long(frame):
+    rows = []
+
+    if frame.empty:
+        return pd.DataFrame()
+
+    adult_frame = frame[frame["derived_life_stage"].astype(str).eq("Adult")].copy()
+
+    for _, row in adult_frame.iterrows():
+        for impairment_type in adult_row_impairment_types(row):
+            rows.append(
+                {
+                    "record_id": row.get("record_id"),
+                    "information_seeker_gender": row.get("information_seeker_gender"),
+                    "specific_impairment_type": impairment_type,
+                    "specific_disability_type": impairment_type,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def adult_person_impairment_frame(frame):
+    rows = []
+
+    if frame.empty:
+        return pd.DataFrame()
+
+    adult_frame = frame[frame["derived_life_stage"].astype(str).eq("Adult")].copy()
+
+    for _, row in adult_frame.iterrows():
+        impairment_types = adult_row_impairment_types(row)
+        impairment_count = len(impairment_types)
+
+        if impairment_count == 0:
+            disability_status = "No Disability"
+            person_impairment_type = "No Disability"
+        elif impairment_count == 1:
+            disability_status = "Has Disability"
+            person_impairment_type = impairment_types[0]
+        else:
+            disability_status = "Has Disability"
+            person_impairment_type = "Multiple Impairments"
+
+        if impairment_count == 0:
+            impairment_count_category = "No Disability"
+        elif impairment_count == 1:
+            impairment_count_category = "One Impairment"
+        elif impairment_count == 2:
+            impairment_count_category = "Two Impairments"
+        else:
+            impairment_count_category = "Three or More Impairments"
+
+        rows.append(
+            {
+                "record_id": row.get("record_id"),
+                "information_seeker_gender": row.get("information_seeker_gender"),
+                "adult_disability_status": disability_status,
+                "adult_person_impairment_type": person_impairment_type,
+                "adult_impairment_count": impairment_count,
+                "adult_impairment_count_category": impairment_count_category,
+                "adult_impairment_multiplicity": (
+                    "No Disability"
+                    if impairment_count == 0
+                    else "Single Impairment"
+                    if impairment_count == 1
+                    else "Multiple Impairments"
+                ),
+                "duplicate_impairment_mentions": max(impairment_count - 1, 0),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def adult_impairment_reconciliation(frame):
+    adult_person_frame = adult_person_impairment_frame(frame)
+    adult_specific_frame = adult_specific_disability_long(frame)
+
+    if adult_person_frame.empty:
+        return pd.DataFrame(columns=["Metric", "Value", "Interpretation"])
+
+    specific_mentions = len(adult_specific_frame)
+    duplicate_mentions = int(adult_person_frame["duplicate_impairment_mentions"].sum())
+    unique_adults_with_impairment = int(
+        adult_person_frame["adult_disability_status"].eq("Has Disability").sum()
+    )
+    adults_with_multiple_impairments = int(
+        adult_person_frame["adult_impairment_count"].gt(1).sum()
+    )
+    reconciled_unique_count = specific_mentions - duplicate_mentions
+
+    return pd.DataFrame(
+        {
+            "Metric": [
+                "Specific impairment mentions",
+                "Duplicate impairment mentions",
+                "Reconciled unique adults with impairment",
+                "Unique adults with impairment",
+                "Adults with multiple impairments",
+            ],
+            "Value": [
+                specific_mentions,
+                duplicate_mentions,
+                reconciled_unique_count,
+                unique_adults_with_impairment,
+                adults_with_multiple_impairments,
+            ],
+            "Interpretation": [
+                "Every selected impairment type is counted once, so one person can contribute more than one mention.",
+                "Extra mentions caused by adults who have more than one impairment type.",
+                "Specific impairment mentions minus duplicate impairment mentions.",
+                "Person-level adult disability prevalence used in the prevalence tables.",
+                "Adults represented under Multiple Impairments in person-level type tables.",
+            ],
+        }
+    )
+
+
+def adult_specific_type_summary(frame):
+    adult_frame = frame[frame["derived_life_stage"].astype(str).eq("Adult")].copy()
+    total_adults = len(adult_frame)
+    long_frame = adult_specific_disability_long(frame)
+
+    if long_frame.empty:
+        return pd.DataFrame(columns=["Impairment type", "Count", "Percentage"])
+
+    summary = (
+        long_frame.groupby("specific_impairment_type", dropna=False)
+        .size()
+        .reset_index(name="Count")
+        .rename(columns={"specific_impairment_type": "Impairment type"})
+        .sort_values("Count", ascending=False)
+    )
+
+    summary["Percentage"] = summary["Count"].map(
+        lambda value: round((value / total_adults) * 100, 1) if total_adults else 0
+    )
+
+    return summary
+
+
+def adult_additional_disability_category_summary(frame):
+    adult_frame = frame[frame["derived_life_stage"].astype(str).eq("Adult")].copy()
+
+    if adult_frame.empty or "adult_additional_disability_category" not in adult_frame.columns:
+        return pd.DataFrame(columns=["Additional impairment category", "Count", "Percentage"])
+
+    valid = adult_frame[
+        adult_frame["adult_additional_disability_category"].ne("None")
+    ].copy()
+
+    if valid.empty:
+        return pd.DataFrame(columns=["Additional impairment category", "Count", "Percentage"])
+
+    summary = (
+        valid.groupby("adult_additional_disability_category", dropna=False)
+        .size()
+        .reset_index(name="Count")
+        .rename(columns={"adult_additional_disability_category": "Additional impairment category"})
+        .sort_values("Count", ascending=False)
+    )
+
+    denominator = len(valid)
+    summary["Percentage"] = summary["Count"].map(
+        lambda value: round((value / denominator) * 100, 1) if denominator else 0
+    )
+
+    return summary
+
+
 # Data loading, reshaping, and KPI preparation
 @st.cache_data(show_spinner="Loading latest helpdesk dataset...")
 def load_data(file_signature):
@@ -400,34 +1096,46 @@ def load_data(file_signature):
     except Exception:
         mapping = None
 
+    required_columns = [
+        "staff_name",
+        "gps_latitude",
+        "gps_longitude",
+        "household_type",
+        "helpdesk_camp_location",
+        "helpdesk_village",
+        "has_disability",
+        "child_disability_type",
+        "child_disability_type_other",
+    ]
+
+    required_columns.extend(WGQ_DISABILITY_DOMAINS.keys())
+    required_columns.extend(ADULT_DISABILITY_CATEGORY_COLUMNS)
+
+    for column in required_columns:
+        if column not in records.columns:
+            records[column] = pd.NA
+
     records["source_row_number"] = records.index + 2
     records["record_id"] = records["source_row_number"].map(lambda row: f"HD-{row:05d}")
 
     records["interview_date"] = pd.to_datetime(records["interview_date"], errors="coerce")
-    records["referral_date"] = pd.to_datetime(records["referral_date"], errors="coerce")
 
-    records["gps_latitude"] = pd.to_numeric(records["gps_latitude"], errors="coerce")
-    records["gps_longitude"] = pd.to_numeric(records["gps_longitude"], errors="coerce")
-    records["staff_name"] = records["staff_name"].map(clean_text)
-    records["staff_name"] = records["staff_name"].fillna("[Not recorded]")
+    if "referral_date" in records.columns:
+        records["referral_date"] = pd.to_datetime(records["referral_date"], errors="coerce")
 
     records["year"] = records["interview_date"].dt.year
     records["month_number"] = records["interview_date"].dt.month
     records["year_month"] = records["interview_date"].dt.to_period("M").astype(str)
     records["month_label"] = records["interview_date"].dt.strftime("%b %Y")
 
+    records["gps_latitude"] = pd.to_numeric(records["gps_latitude"], errors="coerce")
+    records["gps_longitude"] = pd.to_numeric(records["gps_longitude"], errors="coerce")
+    records["staff_name"] = records["staff_name"].map(clean_text)
+    records["staff_name"] = records["staff_name"].fillna("[Not recorded]")
+
+    records["household_type"] = records["household_type"].map(clean_text)
     records["age_group"] = records["information_seeker_age"].map(clean_text)
     records["derived_life_stage"] = records["age_group"].map(age_group_life_stage)
-
-    records["request_category"] = records["request_type_protection_or_information"].map(clean_text)
-    records["action_taken_clean"] = records["action_taken"].map(clean_text)
-    records["follow_up_required_clean"] = records["follow_up_required"].map(clean_text)
-
-    records["helpdesk_location"] = records["helpdesk_camp_location"].map(clean_text)
-    records["helpdesk_location"] = records["helpdesk_location"].fillna(
-        records["helpdesk_village"].map(clean_text)
-    )
-    records["helpdesk_location"] = records["helpdesk_location"].fillna("[Not recorded]")
 
     records["information_seeker_type_raw"] = records["information_seeker_type"].map(clean_text)
     records["information_seeker_gender_raw"] = records["information_seeker_gender"].map(clean_text)
@@ -453,6 +1161,79 @@ def load_data(file_signature):
     records["gender_age_correction_flag"] = (
         records["information_seeker_gender_raw"].fillna("[Missing]")
         != records["information_seeker_gender"].fillna("[Missing]")
+    )
+
+    records["request_category"] = records["request_type_protection_or_information"].map(clean_text)
+    records["action_taken_clean"] = records["action_taken"].map(clean_text)
+    records["follow_up_required_clean"] = records["follow_up_required"].map(clean_text)
+
+    records["helpdesk_location"] = records.apply(derive_linked_helpdesk_location, axis=1)
+
+    records["adult_wgq_disability_domains"] = records.apply(
+        derive_adult_wgq_disability_domains,
+        axis=1,
+    )
+    records["adult_additional_disability_category"] = records.apply(
+        derive_adult_additional_disability_category,
+        axis=1,
+    )
+    records["adult_wgq_disability_status"] = records.apply(
+        derive_adult_wgq_disability_status,
+        axis=1,
+    )
+    records["adult_wgq_disability_type"] = records.apply(
+        derive_adult_wgq_disability_type,
+        axis=1,
+    )
+    records["adult_wgq_domain_count"] = records.apply(
+        derive_adult_wgq_domain_count,
+        axis=1,
+    )
+    records["adult_wgq_impairment_count"] = records.apply(
+        derive_adult_wgq_impairment_count,
+        axis=1,
+    )
+    records["adult_duplicate_impairment_mentions"] = records.apply(
+        derive_adult_duplicate_impairment_mentions,
+        axis=1,
+    )
+    records["adult_wgq_domain_count_category"] = records.apply(
+        derive_adult_wgq_domain_count_category,
+        axis=1,
+    )
+    records["adult_wgq_multiplicity"] = records.apply(
+        derive_adult_wgq_multiplicity,
+        axis=1,
+    )
+    records["adult_wgq_max_score"] = records.apply(
+        derive_adult_wgq_max_score,
+        axis=1,
+    )
+    records["adult_wgq_severity"] = records.apply(
+        derive_adult_wgq_severity,
+        axis=1,
+    )
+    records["adult_disability_exclusion_risk"] = records.apply(
+        derive_adult_disability_exclusion_risk,
+        axis=1,
+    )
+
+    records["child_disability_status"] = records.apply(
+        derive_child_disability_status,
+        axis=1,
+    )
+    records["child_disability_type"] = records.apply(
+        derive_child_disability_type,
+        axis=1,
+    )
+
+    records["disability_status"] = records.apply(
+        derive_combined_disability_status,
+        axis=1,
+    )
+    records["disability_type"] = records.apply(
+        derive_combined_disability_type,
+        axis=1,
     )
 
     records["referral_status"] = "No referral"
@@ -493,6 +1274,7 @@ def load_data(file_signature):
         "year_month",
         "camp_location",
         "helpdesk_location",
+        "household_type",
         "staff_name",
         "gps_latitude",
         "gps_longitude",
@@ -504,6 +1286,21 @@ def load_data(file_signature):
         "information_seeker_gender_raw",
         "type_age_correction_flag",
         "gender_age_correction_flag",
+        "disability_status",
+        "disability_type",
+        "adult_wgq_disability_status",
+        "adult_wgq_disability_type",
+        "adult_wgq_disability_domains",
+        "adult_wgq_domain_count",
+        "adult_wgq_domain_count_category",
+        "adult_wgq_multiplicity",
+        "adult_wgq_max_score",
+        "adult_wgq_severity",
+        "adult_disability_exclusion_risk",
+        "adult_additional_disability_category",
+        "child_disability_status",
+        "child_disability_type",
+        "child_disability_type_other",
         "request_category",
         "referral_status",
         "follow_up_required_clean",
@@ -582,10 +1379,14 @@ def load_data(file_signature):
                 "general_information_records",
                 "partner_referral_records",
                 "follow_up_required_records",
-                "type_age_corrections",
-                "gender_age_corrections",
                 "mapped_gps_records",
                 "staff_recorded_records",
+                "disability_records",
+                "adult_disability_records",
+                "child_disability_records",
+                "adult_multiple_impairment_records",
+                "gender_age_corrected_records",
+                "type_age_corrected_records",
             ],
             "value": [
                 len(dashboard_records),
@@ -595,10 +1396,14 @@ def load_data(file_signature):
                 ).sum(),
                 dashboard_records["referral_status"].eq("Referred to partner agency").sum(),
                 dashboard_records["follow_up_required_clean"].eq("Yes").sum(),
-                dashboard_records["type_age_correction_flag"].sum(),
-                dashboard_records["gender_age_correction_flag"].sum(),
                 dashboard_records[["gps_latitude", "gps_longitude"]].notna().all(axis=1).sum(),
                 dashboard_records["staff_name"].ne("[Not recorded]").sum(),
+                dashboard_records["disability_status"].eq("Has Disability").sum(),
+                dashboard_records["adult_wgq_disability_status"].eq("Has Disability").sum(),
+                dashboard_records["child_disability_status"].eq("Has Disability").sum(),
+                dashboard_records["adult_wgq_multiplicity"].eq("Multiple Impairments").sum(),
+                dashboard_records["gender_age_correction_flag"].sum(),
+                dashboard_records["type_age_correction_flag"].sum(),
             ],
         }
     )
@@ -779,6 +1584,22 @@ def gender_pivot_table(frame, category_column, category_label, top_n=None):
     return pd.concat([pivot, pd.DataFrame([total_row])], ignore_index=True)
 
 
+def basic_count_table(frame, category_column, category_label):
+    if frame.empty or category_column not in frame.columns:
+        return pd.DataFrame()
+
+    table = (
+        frame.groupby(category_column, dropna=False)
+        .size()
+        .reset_index(name="Records")
+        .rename(columns={category_column: category_label})
+        .sort_values("Records", ascending=False)
+    )
+
+    total = pd.DataFrame([{category_label: "Total", "Records": table["Records"].sum()}])
+    return pd.concat([table, total], ignore_index=True)
+
+
 # Table styling helpers
 def style_total_table(table, label_column):
     numeric_columns = [col for col in table.columns if col != label_column]
@@ -852,7 +1673,10 @@ def style_records_table(table):
         col for col in display_table.columns
         if "date" in col.lower()
     ]
-
+    gps_columns = [
+        col for col in display_table.columns
+        if col in ["gps_latitude", "gps_longitude", "lat", "lon"]
+    ]
     numeric_columns = display_table.select_dtypes(include="number").columns.tolist()
 
     formatters = {
@@ -865,8 +1689,10 @@ def style_records_table(table):
     }
 
     for col in numeric_columns:
-        if "latitude" in col.lower() or "longitude" in col.lower():
+        if col in gps_columns:
             formatters[col] = "{:,.6f}"
+        elif "percentage" in str(col).lower():
+            formatters[col] = "{:,.1f}"
         else:
             formatters[col] = "{:,.0f}"
 
@@ -902,7 +1728,7 @@ def style_records_table(table):
     )
 
 
-# Chart, map, and table rendering helpers
+# Chart and table rendering helpers
 def show_gender_table(frame, category_column, category_label, top_n=None):
     table = gender_pivot_table(frame, category_column, category_label, top_n=top_n)
 
@@ -915,6 +1741,256 @@ def show_gender_table(frame, category_column, category_label, top_n=None):
         use_container_width=True,
         hide_index=True,
     )
+
+
+def disability_gender_pivot_table(frame, category_column, category_label, top_n=None):
+    required_columns = [category_column, "disability_status", "information_seeker_gender"]
+
+    if frame.empty or any(column not in frame.columns for column in required_columns):
+        return pd.DataFrame()
+
+    working = frame[required_columns].copy()
+    working[category_column] = working[category_column].map(clean_text)
+    working["disability_status"] = working["disability_status"].map(clean_text)
+    working["information_seeker_gender"] = working["information_seeker_gender"].map(clean_text)
+    working = working.dropna(subset=[category_column, "disability_status", "information_seeker_gender"])
+
+    if working.empty:
+        return pd.DataFrame()
+
+    grouped = (
+        working.groupby(
+            [category_column, "disability_status", "information_seeker_gender"],
+            dropna=False,
+        )
+        .size()
+        .reset_index(name="records")
+    )
+
+    if top_n:
+        top_values = (
+            grouped.groupby(category_column)["records"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(top_n)
+            .index
+        )
+        grouped = grouped[grouped[category_column].isin(top_values)]
+
+    pivot = grouped.pivot_table(
+        index=category_column,
+        columns=["disability_status", "information_seeker_gender"],
+        values="records",
+        aggfunc="sum",
+        fill_value=0,
+    )
+
+    status_order = ["Has Disability", "No Disability"]
+    available_statuses = pivot.columns.get_level_values(0).unique().tolist()
+    ordered_statuses = [status for status in status_order if status in available_statuses]
+    ordered_statuses.extend(
+        sorted(status for status in available_statuses if status not in ordered_statuses)
+    )
+
+    ordered_columns = []
+
+    for status in ordered_statuses:
+        available_genders = [
+            gender
+            for disability_status, gender in pivot.columns
+            if disability_status == status
+        ]
+        ordered_genders = [gender for gender in GENDER_ORDER if gender in available_genders]
+        ordered_genders.extend(
+            sorted(gender for gender in available_genders if gender not in ordered_genders)
+        )
+
+        for gender in ordered_genders:
+            ordered_columns.append((status, gender))
+
+        status_columns = [(status, gender) for gender in ordered_genders]
+        pivot[(status, "Total")] = pivot[status_columns].sum(axis=1)
+        ordered_columns.append((status, "Total"))
+
+    pivot[("Total", "Total")] = pivot[
+        [(status, "Total") for status in ordered_statuses]
+    ].sum(axis=1)
+    ordered_columns.append(("Total", "Total"))
+
+    pivot = pivot[ordered_columns]
+    pivot = pivot.sort_values(("Total", "Total"), ascending=False)
+    pivot.loc["Total"] = pivot.sum(axis=0)
+    pivot.index.name = category_label
+    pivot.columns = pd.MultiIndex.from_tuples(pivot.columns)
+
+    return pivot.astype(int)
+
+
+def style_disability_gender_table(table):
+    def highlight_total_row(row):
+        if row.name == "Total":
+            return [
+                "background-color: #DDEDE5; color: #102A2A; font-weight: 800;"
+                for _ in row
+            ]
+
+        background = "#FFFFFF" if table.index.get_loc(row.name) % 2 == 0 else "#F7FAF8"
+        return [f"background-color: {background};" for _ in row]
+
+    def highlight_total_columns(column):
+        if column.name[1] == "Total":
+            return [
+                "background-color: #FFF4D8; color: #102A2A; font-weight: 800;"
+                for _ in column
+            ]
+        return ["" for _ in column]
+
+    return (
+        table.style
+        .format("{:,.0f}")
+        .apply(highlight_total_row, axis=1)
+        .apply(highlight_total_columns, axis=0)
+        .set_properties(
+            **{
+                "text-align": "center",
+                "font-variant-numeric": "tabular-nums",
+                "border": "1px solid #E5E7EB",
+                "padding": "7px 9px",
+            }
+        )
+        .set_table_styles(
+            [
+                {
+                    "selector": "th",
+                    "props": [
+                        ("background-color", "#12312F"),
+                        ("color", "#FFFFFF"),
+                        ("font-weight", "800"),
+                        ("text-align", "center"),
+                        ("border", "1px solid #D8E2DC"),
+                    ],
+                },
+            ]
+        )
+    )
+
+
+def show_disability_gender_table(frame, category_column, category_label, top_n=None):
+    table = disability_gender_pivot_table(
+        frame,
+        category_column,
+        category_label,
+        top_n=top_n,
+    )
+
+    if table.empty:
+        st.info("No disability breakdown data match the selected filters.")
+        return
+
+    st.dataframe(
+        style_disability_gender_table(table),
+        use_container_width=True,
+    )
+
+
+def draw_disability_gender_bar(frame, category_column, top_n=None, height=430, disability_status_filter=None):
+    required_columns = [category_column, "disability_status", "information_seeker_gender"]
+
+    if frame.empty or any(column not in frame.columns for column in required_columns):
+        st.info("No disability breakdown data match the selected filters.")
+        return
+
+    chart_data = frame[required_columns].copy()
+    chart_data[category_column] = chart_data[category_column].map(clean_text)
+    chart_data["disability_status"] = chart_data["disability_status"].map(clean_text)
+    chart_data["information_seeker_gender"] = chart_data["information_seeker_gender"].map(clean_text)
+    chart_data = chart_data.dropna(subset=required_columns)
+
+    if disability_status_filter:
+        chart_data = chart_data[
+            chart_data["disability_status"].astype(str).eq(disability_status_filter)
+        ].copy()
+
+    if chart_data.empty:
+        st.info("No disability breakdown data match the selected filters.")
+        return
+
+    grouped = (
+        chart_data.groupby(
+            [category_column, "disability_status", "information_seeker_gender"],
+            dropna=False,
+        )
+        .size()
+        .reset_index(name="Records")
+    )
+
+    if top_n:
+        top_values = (
+            grouped.groupby(category_column)["Records"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(top_n)
+            .index
+        )
+        grouped = grouped[grouped[category_column].isin(top_values)]
+
+    if grouped.empty:
+        st.info("No disability breakdown data match the selected filters.")
+        return
+
+    category_order = (
+        grouped.groupby(category_column)["Records"]
+        .sum()
+        .sort_values(ascending=True)
+        .index.astype(str)
+        .tolist()
+    )
+
+    status_values = grouped["disability_status"].astype(str).unique().tolist()
+    status_order = [
+        status
+        for status in ["Has Disability", "No Disability"]
+        if status in status_values
+    ]
+    status_order.extend(sorted(status for status in status_values if status not in status_order))
+
+    chart_height = max(240, min(520, 24 * len(category_order) + 70))
+
+    base_chart = (
+        alt.Chart(grouped)
+        .mark_bar(cornerRadiusEnd=2, stroke="#FFFFFF", strokeWidth=0.5)
+        .encode(
+            y=alt.Y(
+                f"{category_column}:N",
+                sort=category_order,
+                title=None,
+                axis=alt.Axis(labelLimit=720, labelFontSize=11, labelPadding=6),
+            ),
+            x=alt.X("Records:Q", title="Records", stack="zero"),
+            color=gender_color("information_seeker_gender:N"),
+            tooltip=[
+                alt.Tooltip(f"{category_column}:N", title="Category"),
+                alt.Tooltip("disability_status:N", title="Disability status"),
+                alt.Tooltip("information_seeker_gender:N", title="Gender"),
+                alt.Tooltip("Records:Q", title="Records", format=","),
+            ],
+        )
+        .properties(height=chart_height)
+    )
+
+    if len(status_order) == 1:
+        chart = base_chart
+    else:
+        chart = base_chart.encode(
+            row=alt.Row(
+                "disability_status:N",
+                sort=status_order,
+                title="Disability status",
+                header=alt.Header(labelColor="#12312F", labelFontSize=12, titleFontSize=12),
+            )
+        ).resolve_scale(x="shared", y="shared")
+
+    st.altair_chart(polish_chart(chart), use_container_width=True)
 
 
 def gender_wide_chart_data(frame, category_column, top_n=None):
@@ -930,35 +2006,6 @@ def gender_wide_chart_data(frame, category_column, top_n=None):
         chart_data = chart_data.drop(columns="Total")
 
     return chart_data
-
-
-def map_data(frame):
-    if frame.empty:
-        return pd.DataFrame()
-
-    required_columns = ["gps_latitude", "gps_longitude"]
-
-    if not all(col in frame.columns for col in required_columns):
-        return pd.DataFrame()
-
-    mapped = frame.dropna(subset=required_columns).copy()
-
-    mapped = mapped[
-        mapped["gps_latitude"].between(-90, 90)
-        & mapped["gps_longitude"].between(-180, 180)
-    ]
-
-    if mapped.empty:
-        return pd.DataFrame()
-
-    mapped = mapped.rename(
-        columns={
-            "gps_latitude": "lat",
-            "gps_longitude": "lon",
-        }
-    )
-
-    return mapped
 
 
 def draw_gender_bar(frame, category_column, top_n=None, height=430):
@@ -1085,6 +2132,85 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
     st.altair_chart(polish_chart(chart), use_container_width=True)
 
 
+
+
+def draw_total_donut(frame, category_column, category_label, height=320, min_label_share=0.04):
+    if frame.empty or category_column not in frame.columns:
+        st.info("No records match the selected filters.")
+        return
+
+    summary = (
+        frame.groupby(category_column, dropna=False)
+        .size()
+        .reset_index(name="Records")
+        .sort_values("Records", ascending=False)
+    )
+
+    if summary.empty or summary["Records"].sum() == 0:
+        st.info("No summary data for the selected filters.")
+        return
+
+    summary[category_column] = summary[category_column].fillna("[Missing]").astype(str)
+    summary["Share"] = summary["Records"] / summary["Records"].sum()
+    summary["Share label"] = summary["Share"].map(
+        lambda value: f"{value:.1%}" if value >= min_label_share else ""
+    )
+
+    donut = (
+        alt.Chart(summary)
+        .mark_arc(innerRadius=72, outerRadius=120, stroke="#FFFFFF", strokeWidth=2)
+        .encode(
+            theta=alt.Theta("Records:Q", stack=True),
+            color=alt.Color(
+                f"{category_column}:N",
+                title=category_label,
+                scale=alt.Scale(
+                    range=["#2F7D69", "#D9A441", "#2563EB", "#DB2777", "#7C3AED", "#64748B"]
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{category_column}:N", title=category_label),
+                alt.Tooltip("Records:Q", title="Records", format=","),
+                alt.Tooltip("Share:Q", title="Share", format=".1%"),
+            ],
+        )
+    )
+
+    labels = (
+        alt.Chart(summary[summary["Share label"].ne("")])
+        .mark_text(radius=145, fontSize=12, fontWeight=700, color="#334155")
+        .encode(
+            theta=alt.Theta("Records:Q", stack=True),
+            text=alt.Text("Share label:N"),
+        )
+    )
+
+    st.altair_chart(
+        polish_chart((donut + labels).properties(height=height)),
+        use_container_width=True,
+    )
+
+
+def draw_status_donut_pair(frame, status_column, height=300):
+    if frame.empty or status_column not in frame.columns:
+        st.info("No records match the selected filters.")
+        return
+
+    status_cols = st.columns(2)
+
+    for column, status in zip(status_cols, ["No Disability", "Has Disability"]):
+        with column:
+            st.caption(status)
+            status_frame = frame[frame[status_column].astype(str).eq(status)]
+            draw_total_donut(
+                status_frame,
+                "information_seeker_gender",
+                "Gender",
+                height=height,
+                min_label_share=0.06,
+            )
+
+
 def draw_monthly_gender_column_bar(frame, height=340):
     if frame.empty:
         st.info("No records match the selected filters.")
@@ -1126,7 +2252,68 @@ def draw_monthly_gender_column_bar(frame, height=340):
     st.altair_chart(polish_chart(line), use_container_width=True)
 
 
-# Insight cards, empty states, footer, and record search
+def draw_count_bar(frame, category_column, category_label, height=360):
+    if frame.empty or category_column not in frame.columns:
+        st.info("No records match the selected filters.")
+        return
+
+    chart_data = (
+        frame.groupby(category_column, dropna=False)
+        .size()
+        .reset_index(name="Records")
+        .rename(columns={category_column: category_label})
+        .sort_values("Records", ascending=False)
+    )
+
+    chart_data["axis_label"] = chart_data[category_label].map(
+        lambda value: short_axis_label(value, max_chars=24)
+    )
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_bar(cornerRadiusEnd=2, color="#2F7D69")
+        .encode(
+            x=alt.X(
+                "axis_label:N",
+                sort=chart_data["axis_label"].tolist(),
+                title=None,
+                axis=alt.Axis(labelAngle=-30, labelLimit=160, labelFontSize=10),
+            ),
+            y=alt.Y("Records:Q", title="Records"),
+            tooltip=[
+                alt.Tooltip(f"{category_label}:N", title=category_label),
+                alt.Tooltip("Records:Q", title="Records", format=","),
+            ],
+        )
+        .properties(height=height)
+    )
+
+    st.altair_chart(polish_chart(chart), use_container_width=True)
+
+
+# Map, insight cards, empty states, footer, and record search
+def map_data(frame):
+    if frame.empty:
+        return pd.DataFrame()
+
+    required_columns = ["gps_latitude", "gps_longitude"]
+
+    if not all(col in frame.columns for col in required_columns):
+        return pd.DataFrame()
+
+    mapped = frame.dropna(subset=required_columns).copy()
+    mapped = mapped[
+        mapped["gps_latitude"].between(-90, 90)
+        & mapped["gps_longitude"].between(-180, 180)
+    ]
+
+    if mapped.empty:
+        return pd.DataFrame()
+
+    mapped = mapped.rename(columns={"gps_latitude": "lat", "gps_longitude": "lon"})
+    return mapped
+
+
 def top_value(frame, column):
     if frame.empty or column not in frame.columns:
         return "None", 0
@@ -1179,7 +2366,9 @@ def show_footer():
         <div class="developer-footer">
             <div><strong>ImpactLens Africa</strong></div>
             <div>Turning Data Into Human Impact</div>
-            <div>Developed by John Kul, MEAL Officer, Tdh.</div>
+            <div style="font-family: monospace; font-style: italic;">
+                Developed by John Kul, MEAL Officer-Tdh.
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1217,10 +2406,6 @@ def search_records(frame, query):
 # Load source data and prepare date boundaries
 inject_theme_css()
 
-if st.sidebar.button("Reload dataset", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
-
 file_signature = data_file_signature(DATA_FILE_PATH)
 records, protection, information, referrals, kpis = load_data(file_signature)
 
@@ -1246,44 +2431,50 @@ sanitize_date_state("to_date_filter", calendar_min_date, calendar_max_date, max_
 
 
 # Sidebar filters
-# Filter order is intentionally cascading: Camp -> Helpdesk -> Information seeker -> Gender -> Age -> Request
 with st.sidebar:
-    st.caption(f"Data file: {DATA_FILE_PATH.name}")
-
-    if DATA_FILE_PATH.exists():
-        last_modified = pd.to_datetime(DATA_FILE_PATH.stat().st_mtime, unit="s")
-        st.caption(f"Last modified: {last_modified.strftime('%d %b %Y %H:%M:%S')}")
-        st.caption(f"File size: {DATA_FILE_PATH.stat().st_size:,} bytes")
-
-    st.caption(f"Loaded records: {len(records):,}")
-    st.caption(
-        f"Loaded date range: {records['interview_date'].min().date()} to {records['interview_date'].max().date()}"
-    )
-
     st.header("Filters")
-
-    st.button(
-        "Reset filters",
-        use_container_width=True,
-        on_click=reset_filters,
-        args=(default_from_date, max_date),
+    st.markdown(
+        '<div class="section-note">Use the filters from top to bottom. Start with the date range, then select a camp to unlock linked location and demographic filters.</div>',
+        unsafe_allow_html=True,
     )
 
-    st.markdown("### Date range")
+    action_cols = st.columns(2)
 
-    selected_from_date = st.date_input(
-        "From:",
-        min_value=calendar_min_date,
-        max_value=calendar_max_date,
-        key="from_date_filter",
-    )
+    with action_cols[0]:
+        if st.button(
+            "Refresh data",
+            use_container_width=True,
+            help="Reload the latest Excel dataset and clear Streamlit cached data.",
+        ):
+            st.cache_data.clear()
+            st.rerun()
 
-    selected_to_date = st.date_input(
-        "To:",
-        min_value=calendar_min_date,
-        max_value=calendar_max_date,
-        key="to_date_filter",
-    )
+    with action_cols[1]:
+        st.button(
+            "Clear filters",
+            use_container_width=True,
+            help="Reset the date range and all filter selections. This does not reload the dataset.",
+            on_click=reset_filters,
+            args=(default_from_date, max_date),
+        )
+
+    st.caption("Refresh data: Updates the source dataset.")
+    st.caption("Clear filters: Resets your current selections.")
+
+    with st.expander("Date range", expanded=True):
+        selected_from_date = st.date_input(
+            "From:",
+            min_value=calendar_min_date,
+            max_value=calendar_max_date,
+            key="from_date_filter",
+        )
+
+        selected_to_date = st.date_input(
+            "To:",
+            min_value=calendar_min_date,
+            max_value=calendar_max_date,
+            key="to_date_filter",
+        )
 
     if selected_from_date > selected_to_date:
         st.error("The From date cannot be later than the To date.")
@@ -1308,20 +2499,37 @@ with st.sidebar:
         & records["interview_date"].lt(end_date + pd.Timedelta(days=1))
     ].copy()
 
-    camp_options = filter_options(date_filtered_records["camp_location"])
-    sanitize_multiselect_state("camp_location_filter", camp_options)
-
-    selected_camp_locations = st.multiselect(
-        "Camp location",
-        camp_options,
-        key="camp_location_filter",
-    )
-
     selected_helpdesk_locations = []
     selected_information_seeker_types = []
     selected_genders = []
     selected_age_groups = []
     selected_request_categories = []
+
+    with st.expander("Location filters", expanded=True):
+        camp_options = filter_options(date_filtered_records["camp_location"])
+        sanitize_multiselect_state("camp_location_filter", camp_options)
+
+        selected_camp_locations = st.multiselect(
+            "Camp location",
+            camp_options,
+            key="camp_location_filter",
+        )
+
+        if not selected_camp_locations:
+            st.info("Select a camp location first to unlock the remaining filters.")
+        else:
+            camp_filtered_records = date_filtered_records[
+                date_filtered_records["camp_location"].astype(str).isin(selected_camp_locations)
+            ].copy()
+
+            helpdesk_options = filter_options(camp_filtered_records["helpdesk_location"])
+            sanitize_multiselect_state("helpdesk_location_filter", helpdesk_options)
+
+            selected_helpdesk_locations = st.multiselect(
+                "Helpdesk location",
+                helpdesk_options,
+                key="helpdesk_location_filter",
+            )
 
     if not selected_camp_locations:
         for key in [
@@ -1333,22 +2541,7 @@ with st.sidebar:
         ]:
             st.session_state[key] = []
 
-        st.info("Select a camp location first to unlock the remaining filters.")
-
     else:
-        camp_filtered_records = date_filtered_records[
-            date_filtered_records["camp_location"].astype(str).isin(selected_camp_locations)
-        ].copy()
-
-        helpdesk_options = filter_options(camp_filtered_records["helpdesk_location"])
-        sanitize_multiselect_state("helpdesk_location_filter", helpdesk_options)
-
-        selected_helpdesk_locations = st.multiselect(
-            "Helpdesk location",
-            helpdesk_options,
-            key="helpdesk_location_filter",
-        )
-
         if selected_helpdesk_locations:
             helpdesk_filtered_records = camp_filtered_records[
                 camp_filtered_records["helpdesk_location"]
@@ -1358,56 +2551,57 @@ with st.sidebar:
         else:
             helpdesk_filtered_records = camp_filtered_records.copy()
 
-        seeker_type_options = filter_options(helpdesk_filtered_records["information_seeker_type"])
-        sanitize_multiselect_state("information_seeker_type_filter", seeker_type_options)
+        with st.expander("Demographic filters", expanded=True):
+            seeker_type_options = filter_options(helpdesk_filtered_records["information_seeker_type"])
+            sanitize_multiselect_state("information_seeker_type_filter", seeker_type_options)
 
-        selected_information_seeker_types = st.multiselect(
-            "Information seeker type",
-            seeker_type_options,
-            key="information_seeker_type_filter",
-        )
+            selected_information_seeker_types = st.multiselect(
+                "Information seeker type",
+                seeker_type_options,
+                key="information_seeker_type_filter",
+            )
 
-        if selected_information_seeker_types:
-            seeker_filtered_records = helpdesk_filtered_records[
-                helpdesk_filtered_records["information_seeker_type"]
-                .astype(str)
-                .isin(selected_information_seeker_types)
-            ].copy()
-        else:
-            seeker_filtered_records = helpdesk_filtered_records.copy()
+            if selected_information_seeker_types:
+                seeker_filtered_records = helpdesk_filtered_records[
+                    helpdesk_filtered_records["information_seeker_type"]
+                    .astype(str)
+                    .isin(selected_information_seeker_types)
+                ].copy()
+            else:
+                seeker_filtered_records = helpdesk_filtered_records.copy()
 
-        gender_options = filter_options(
-            seeker_filtered_records["information_seeker_gender"],
-            ordered_values=GENDER_ORDER,
-        )
-        sanitize_multiselect_state("information_seeker_gender_filter", gender_options)
+            gender_options = filter_options(
+                seeker_filtered_records["information_seeker_gender"],
+                ordered_values=GENDER_ORDER,
+            )
+            sanitize_multiselect_state("information_seeker_gender_filter", gender_options)
 
-        selected_genders = st.multiselect(
-            "Gender",
-            gender_options,
-            key="information_seeker_gender_filter",
-        )
+            selected_genders = st.multiselect(
+                "Gender",
+                gender_options,
+                key="information_seeker_gender_filter",
+            )
 
-        if selected_genders:
-            gender_filtered_records = seeker_filtered_records[
-                seeker_filtered_records["information_seeker_gender"]
-                .astype(str)
-                .isin(selected_genders)
-            ].copy()
-        else:
-            gender_filtered_records = seeker_filtered_records.copy()
+            if selected_genders:
+                gender_filtered_records = seeker_filtered_records[
+                    seeker_filtered_records["information_seeker_gender"]
+                    .astype(str)
+                    .isin(selected_genders)
+                ].copy()
+            else:
+                gender_filtered_records = seeker_filtered_records.copy()
 
-        age_options = filter_options(
-            gender_filtered_records["age_group"],
-            ordered_values=AGE_GROUP_ORDER,
-        )
-        sanitize_multiselect_state("age_group_filter", age_options)
+            age_options = filter_options(
+                gender_filtered_records["age_group"],
+                ordered_values=AGE_GROUP_ORDER,
+            )
+            sanitize_multiselect_state("age_group_filter", age_options)
 
-        selected_age_groups = st.multiselect(
-            "Age group",
-            age_options,
-            key="age_group_filter",
-        )
+            selected_age_groups = st.multiselect(
+                "Age group",
+                age_options,
+                key="age_group_filter",
+            )
 
         if selected_age_groups:
             age_filtered_records = gender_filtered_records[
@@ -1418,20 +2612,31 @@ with st.sidebar:
         else:
             age_filtered_records = gender_filtered_records.copy()
 
-        request_options = filter_options(age_filtered_records["request_category"])
-        sanitize_multiselect_state("request_category_filter", request_options)
+        with st.expander("Request filters", expanded=True):
+            request_options = filter_options(age_filtered_records["request_category"])
+            sanitize_multiselect_state("request_category_filter", request_options)
 
-        selected_request_categories = st.multiselect(
-            "Request category",
-            request_options,
-            key="request_category_filter",
+            selected_request_categories = st.multiselect(
+                "Request category",
+                request_options,
+                key="request_category_filter",
+            )
+
+    with st.expander("Dataset status", expanded=False):
+        st.caption(f"File modified: {file_signature[3] if file_signature[3] else 'Not found'}")
+        st.caption(
+            f"File size: {format_number(file_signature[2]) if file_signature[2] else 'Not found'} bytes"
+        )
+        st.caption(f"Loaded records: {format_number(len(records))}")
+        st.caption(
+            f"Data range: {min_date.strftime('%d %b %Y')} to {max_date.strftime('%d %b %Y')}"
         )
 
-    st.divider()
-    st.caption(f"Camp: {filter_label(selected_camp_locations)}")
-    st.caption(f"Helpdesk: {filter_label(selected_helpdesk_locations)}")
-    st.caption(f"Gender: {filter_label(selected_genders)}")
-    st.caption(f"Age: {filter_label(selected_age_groups)}")
+    with st.expander("Current selection", expanded=False):
+        st.caption(f"Camp: {filter_label(selected_camp_locations)}")
+        st.caption(f"Helpdesk: {filter_label(selected_helpdesk_locations)}")
+        st.caption(f"Gender: {filter_label(selected_genders)}")
+        st.caption(f"Age: {filter_label(selected_age_groups)}")
 
 
 # Apply filters to each dashboard dataset
@@ -1466,6 +2671,7 @@ partner_referrals = filtered_records["referral_status"].eq(
     "Referred to partner agency"
 ).sum()
 follow_up = filtered_records["follow_up_required_clean"].eq("Yes").sum()
+disability_records = filtered_records["disability_status"].eq("Has Disability").sum()
 
 
 # Dashboard header and KPI row
@@ -1488,7 +2694,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-kpi_cols = st.columns(5)
+kpi_cols = st.columns(6)
 kpi_cols[0].metric(
     "Valid records",
     format_number(total_records),
@@ -1514,6 +2720,11 @@ kpi_cols[4].metric(
     format_number(follow_up),
     f"{format_rate(follow_up, total_records)} follow-up rate",
 )
+kpi_cols[5].metric(
+    "Disability records",
+    format_number(disability_records),
+    f"{format_rate(disability_records, total_records)} of records",
+)
 
 if filtered_records.empty:
     show_empty_state(from_date, to_date)
@@ -1522,10 +2733,14 @@ if filtered_records.empty:
 
 
 # Quick insight cards
+disability_type_records = filtered_records[
+    filtered_records["disability_status"].eq("Has Disability")
+]
+
 top_location, top_location_count = top_value(filtered_records, "helpdesk_location")
 top_request, top_request_count = top_value(filtered_records, "request_category")
 top_concern, top_concern_count = top_value(filtered_protection, "protection_concern")
-top_follow_up, top_follow_up_count = top_value(filtered_records, "follow_up_required_clean")
+top_disability, top_disability_count = top_value(disability_type_records, "disability_type")
 
 st.subheader("Quick Insights")
 insight_cols = st.columns(4)
@@ -1549,17 +2764,17 @@ show_insight_card(
 )
 show_insight_card(
     insight_cols[3],
-    "Follow-up status",
-    top_follow_up,
-    f"{format_number(top_follow_up_count)} records",
+    "Top impairment type",
+    top_disability,
+    f"{format_number(top_disability_count)} records",
 )
 
 st.divider()
 
 
 # Dashboard tabs
-tab_overview, tab_concerns, tab_information, tab_referrals, tab_map, tab_data = st.tabs(
-    ["Overview", "Concerns", "Information", "Referrals", "Map", "Records"]
+tab_overview, tab_disability, tab_concerns, tab_information, tab_referrals, tab_map, tab_data = st.tabs(
+    ["Overview", "Disability", "Concerns", "Information", "Referrals", "Map", "Records"]
 )
 
 
@@ -1568,7 +2783,7 @@ with tab_overview:
     left, right = st.columns([1.2, 1])
 
     with left:
-        st.subheader("Monthly Requests by Gender")
+        st.subheader("Monthly Requests by gender")
         st.markdown(
             '<div class="section-note">Records grouped by interview month and gender.</div>',
             unsafe_allow_html=True,
@@ -1576,50 +2791,44 @@ with tab_overview:
         draw_monthly_gender_column_bar(filtered_records, height=340)
 
     with right:
-        st.subheader("Request Type by Gender")
+        st.subheader("Request type by information")
         st.markdown(
-            '<div class="section-note">Protection concerns and information requests by gender.</div>',
+            '<div class="section-note">Total records by request type.</div>',
             unsafe_allow_html=True,
         )
-        draw_gender_column_bar(filtered_records, "request_category", height=340)
+        draw_total_donut(filtered_records, "request_category", "Request type", height=340)
 
     st.subheader("Request Type Table")
     show_gender_table(filtered_records, "request_category", "Request type")
 
     st.divider()
 
-    st.subheader("Demographics by Gender")
-    demo_cols = st.columns(2)
+    st.subheader("Demographics by gender")
+    st.caption("Information seeker type")
+    draw_gender_column_bar(filtered_records, "information_seeker_type", height=300)
+    show_gender_table(filtered_records, "information_seeker_type", "Information seeker type")
 
-    with demo_cols[0]:
-        st.caption("Information seeker type")
-        draw_gender_column_bar(filtered_records, "information_seeker_type", height=300)
-        show_gender_table(filtered_records, "information_seeker_type", "Information seeker type")
-
-    with demo_cols[1]:
-        st.caption("Age group")
-        draw_gender_column_bar(filtered_records, "age_group", height=360)
-        show_gender_table(filtered_records, "age_group", "Age group")
+    st.markdown("#### Age group")
+    st.caption("Age-group distribution by gender")
+    draw_gender_column_bar(filtered_records, "age_group", height=420)
+    show_gender_table(filtered_records, "age_group", "Age group")
 
     st.divider()
 
-    st.subheader("Location by Gender")
-    location_cols = st.columns(2)
+    st.subheader("Location by gender")
+    st.caption("Camp location")
+    draw_gender_column_bar(filtered_records, "camp_location", height=320)
+    show_gender_table(filtered_records, "camp_location", "Camp location")
 
-    with location_cols[0]:
-        st.caption("Camp location")
-        draw_gender_column_bar(filtered_records, "camp_location", height=320)
-        show_gender_table(filtered_records, "camp_location", "Camp location")
-
-    with location_cols[1]:
-        st.caption("Helpdesk location")
-        draw_gender_column_bar(filtered_records, "helpdesk_location", height=380)
-        show_gender_table(filtered_records, "helpdesk_location", "Helpdesk location")
+    st.markdown("#### Helpdesk location")
+    st.caption("Helpdesk-level distribution by gender")
+    draw_gender_column_bar(filtered_records, "helpdesk_location", height=460)
+    show_gender_table(filtered_records, "helpdesk_location", "Helpdesk location")
 
 
 # Protection concerns tab
 with tab_concerns:
-    st.subheader("Top Protection Concerns by Gender")
+    st.subheader("Top Protection Concerns by gender")
 
     concern_top_n = st.radio(
         "Show top concerns",
@@ -1640,6 +2849,32 @@ with tab_concerns:
         "protection_concern",
         "Protection concern",
         top_n=concern_top_n,
+    )
+
+    st.subheader("Protection Concerns by Disability Status and Gender")
+    st.markdown(
+        '<div class="section-note">Rows are protection concerns. Columns first split by disability status, then by gender.</div>',
+        unsafe_allow_html=True,
+    )
+    concern_disability_top_n = st.radio(
+        "Show top concerns by disability status",
+        [10, 15, 25],
+        horizontal=True,
+        index=1,
+        key="concern_disability_top_n",
+    )
+    draw_disability_gender_bar(
+        filtered_protection,
+        "protection_concern",
+        top_n=concern_disability_top_n,
+        height=520,
+        disability_status_filter="Has Disability",
+    )
+    show_disability_gender_table(
+        filtered_protection,
+        "protection_concern",
+        "Protection concern",
+        top_n=concern_disability_top_n,
     )
 
 
@@ -1668,22 +2903,45 @@ with tab_information:
         top_n=information_top_n,
     )
 
+    st.subheader("Information Needs by Disability Status and Gender")
+    st.markdown(
+        '<div class="section-note">Rows are information needs. Columns first split by disability status, then by gender.</div>',
+        unsafe_allow_html=True,
+    )
+    information_disability_top_n = st.radio(
+        "Show top information needs by disability status",
+        [10, 15, 25],
+        horizontal=True,
+        index=1,
+        key="information_disability_top_n",
+    )
+    draw_disability_gender_bar(
+        filtered_information,
+        "general_information_need",
+        top_n=information_disability_top_n,
+        height=520,
+        disability_status_filter="Has Disability",
+    )
+    show_disability_gender_table(
+        filtered_information,
+        "general_information_need",
+        "General information need",
+        top_n=information_disability_top_n,
+    )
+
 
 # Referrals tab
 with tab_referrals:
     st.subheader("Action and Follow-up by Gender")
 
-    action_cols = st.columns(2)
+    st.caption("Referral status")
+    draw_gender_column_bar(filtered_records, "referral_status", height=360)
+    show_gender_table(filtered_records, "referral_status", "Referral status")
 
-    with action_cols[0]:
-        st.caption("Referral status")
-        draw_gender_column_bar(filtered_records, "referral_status", height=360)
-        show_gender_table(filtered_records, "referral_status", "Referral status")
-
-    with action_cols[1]:
-        st.caption("Follow-up required")
-        draw_gender_column_bar(filtered_records, "follow_up_required_clean", height=320)
-        show_gender_table(filtered_records, "follow_up_required_clean", "Follow-up required")
+    st.markdown("#### Follow-up required")
+    st.caption("Follow-up requirement by gender")
+    draw_gender_column_bar(filtered_records, "follow_up_required_clean", height=360)
+    show_gender_table(filtered_records, "follow_up_required_clean", "Follow-up required")
 
     st.divider()
 
@@ -1711,6 +2969,133 @@ with tab_referrals:
     )
 
 
+# Disability tab
+with tab_disability:
+    st.subheader("Disability Analysis")
+    st.markdown(
+        '<div class="section-note">Status labels remain Has Disability / No Disability. Specific types are standardized as impairments and shared across adults and children.</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.caption("Overall disability status by gender")
+    draw_status_donut_pair(filtered_records, "disability_status", height=300)
+    show_gender_table(filtered_records, "disability_status", "Disability status")
+
+    st.markdown("#### Overall impairment type by gender")
+    st.caption("Only records classified as Has Disability are included in this impairment type view.")
+    disability_type_records = filtered_records[
+        filtered_records["disability_status"].eq("Has Disability")
+    ]
+    draw_gender_column_bar(disability_type_records, "disability_type", height=430)
+    show_gender_table(disability_type_records, "disability_type", "Impairment type")
+
+    st.divider()
+
+    st.subheader("Adult Disability Prevalence")
+    adult_records = filtered_records[filtered_records["derived_life_stage"].eq("Adult")]
+    adult_person_disability = adult_person_impairment_frame(adult_records)
+
+    st.caption("Adult disability status by gender")
+    draw_status_donut_pair(adult_person_disability, "adult_disability_status", height=300)
+    show_gender_table(
+        adult_person_disability,
+        "adult_disability_status",
+        "Adult disability status",
+    )
+
+    st.markdown("#### Adult impairment type summary by gender")
+    st.caption("Adults with multiple impairments are represented as Multiple Impairments in this person-level summary.")
+    adult_person_impairment_records = adult_person_disability[
+        adult_person_disability["adult_disability_status"].eq("Has Disability")
+    ]
+    draw_gender_column_bar(
+        adult_person_impairment_records,
+        "adult_person_impairment_type",
+        height=430,
+    )
+    show_gender_table(
+        adult_person_impairment_records,
+        "adult_person_impairment_type",
+        "Adult impairment type",
+    )
+
+    st.divider()
+
+    st.subheader("Adult Specific Impairment Breakdown")
+    st.markdown(
+        '<div class="section-note">This breakdown counts each specific impairment type. Adults with multiple impairments may appear in more than one type.</div>',
+        unsafe_allow_html=True,
+    )
+
+    adult_specific_impairment_records = adult_specific_disability_long(adult_records)
+
+    draw_gender_bar(
+        adult_specific_impairment_records,
+        "specific_impairment_type",
+        height=420,
+    )
+    show_gender_table(
+        adult_specific_impairment_records,
+        "specific_impairment_type",
+        "Specific impairment type",
+    )
+
+    st.subheader("Adult Specific Impairment Type Prevalence")
+    st.dataframe(
+        style_records_table(adult_specific_type_summary(adult_records)),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    st.subheader("Adult Multiple Impairment Analysis")
+    st.markdown(
+        '<div class="section-note">The donut chart uses total adult counts. The table retains the gender breakdown for detail.</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Single vs multiple impairments")
+    draw_total_donut(
+        adult_person_disability,
+        "adult_impairment_multiplicity",
+        "Number of impairment types",
+        height=320,
+    )
+    show_gender_table(
+        adult_person_disability,
+        "adult_impairment_multiplicity",
+        "Number of impairment types",
+    )
+
+    st.subheader("Adult Impairment Reconciliation")
+    st.markdown(
+        '<div class="section-note">Specific impairment mentions minus duplicate impairment mentions equals the unique adult disability prevalence count.</div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        style_records_table(adult_impairment_reconciliation(adult_records)),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    st.subheader("Child Disability")
+    child_records = filtered_records[filtered_records["derived_life_stage"].eq("Child")]
+
+    st.caption("Child disability status")
+    draw_status_donut_pair(child_records, "child_disability_status", height=300)
+    show_gender_table(child_records, "child_disability_status", "Child disability status")
+
+    st.markdown("#### Child impairment type")
+    st.caption("Only children classified as Has Disability are included in this impairment type view.")
+    child_disability_records = child_records[
+        child_records["child_disability_status"].eq("Has Disability")
+    ]
+    draw_gender_column_bar(child_disability_records, "child_disability_type", height=420)
+    show_gender_table(child_disability_records, "child_disability_type", "Child impairment type")
+
+
 # Map tab
 with tab_map:
     st.subheader("Helpdesk Locations Map")
@@ -1724,10 +3109,7 @@ with tab_map:
     if mapped_records.empty:
         st.info("No valid GPS coordinates are available for the selected filters.")
     else:
-        st.map(
-            mapped_records[["lat", "lon"]],
-            use_container_width=True,
-        )
+        st.map(mapped_records[["lat", "lon"]], use_container_width=True)
 
         map_summary = (
             mapped_records.groupby(
@@ -1826,3 +3208,4 @@ with tab_data:
 
 # Developer footer
 show_footer()
+
