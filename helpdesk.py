@@ -345,6 +345,21 @@ def clean_text(value):
     return pd.NA if value == "" else " ".join(value.split())
 
 
+def normalize_staff_name(value):
+    value = clean_text(value)
+
+    if pd.isna(value):
+        return "[Not recorded]"
+
+    value = str(value).strip()
+    normalized_empty_values = {"", "nan", "none", "missing", "not recorded", "[not recorded]"}
+
+    if value.lower() in normalized_empty_values:
+        return "[Not recorded]"
+
+    return " ".join(value.split()).title()
+
+
 def normalize_response(value):
     value = clean_text(value)
 
@@ -464,6 +479,50 @@ def build_label_map(mapping, prefix):
 
     return label_map
 
+
+
+def extract_coordinate_numbers(value):
+    if pd.isna(value):
+        return []
+
+    return [
+        float(match)
+        for match in re.findall(r"[-+]?\d+(?:\.\d+)?", str(value))
+    ]
+
+
+def derive_gps_coordinates(row):
+    latitude_values = extract_coordinate_numbers(row.get("gps_latitude"))
+    longitude_values = extract_coordinate_numbers(row.get("gps_longitude"))
+    gps_location_longitude_values = extract_coordinate_numbers(row.get("_GPS Location_longitude"))
+
+    latitude = pd.NA
+    longitude = pd.NA
+
+    if len(latitude_values) >= 2:
+        latitude = latitude_values[0]
+        longitude = latitude_values[1]
+    else:
+        if latitude_values:
+            latitude = latitude_values[0]
+
+        if longitude_values:
+            longitude = longitude_values[0]
+
+        if gps_location_longitude_values and (
+            pd.isna(longitude) or (not pd.isna(latitude) and longitude == latitude)
+        ):
+            longitude = gps_location_longitude_values[0]
+
+    if not pd.isna(latitude) and not pd.isna(longitude):
+        if abs(latitude) > 90 and abs(longitude) <= 90:
+            latitude, longitude = longitude, latitude
+
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            latitude = pd.NA
+            longitude = pd.NA
+
+    return pd.Series({"gps_latitude": latitude, "gps_longitude": longitude})
 
 # Dataset freshness helper for Streamlit cache
 def data_file_signature(path):
@@ -1129,10 +1188,10 @@ def load_data(file_signature):
     records["year_month"] = records["interview_date"].dt.to_period("M").astype(str)
     records["month_label"] = records["interview_date"].dt.strftime("%b %Y")
 
-    records["gps_latitude"] = pd.to_numeric(records["gps_latitude"], errors="coerce")
-    records["gps_longitude"] = pd.to_numeric(records["gps_longitude"], errors="coerce")
-    records["staff_name"] = records["staff_name"].map(clean_text)
-    records["staff_name"] = records["staff_name"].fillna("[Not recorded]")
+    parsed_gps = records.apply(derive_gps_coordinates, axis=1)
+    records["gps_latitude"] = pd.to_numeric(parsed_gps["gps_latitude"], errors="coerce")
+    records["gps_longitude"] = pd.to_numeric(parsed_gps["gps_longitude"], errors="coerce")
+    records["staff_name"] = records["staff_name"].map(normalize_staff_name)
 
     records["household_type"] = records["household_type"].map(clean_text)
     records["age_group"] = records["information_seeker_age"].map(clean_text)
@@ -1942,7 +2001,7 @@ def draw_disability_gender_bar(frame, category_column, top_n=None, height=430, d
     category_order = (
         grouped.groupby(category_column)["Records"]
         .sum()
-        .sort_values(ascending=True)
+        .sort_values(ascending=False)
         .index.astype(str)
         .tolist()
     )
@@ -2024,7 +2083,7 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430):
     else:
         category_order = (
             chart_data.assign(Total=chart_data[gender_columns].sum(axis=1))
-            .sort_values("Total", ascending=True)[category_column]
+            .sort_values("Total", ascending=False)[category_column]
             .astype(str)
             .tolist()
         )
@@ -2293,6 +2352,103 @@ def draw_count_bar(frame, category_column, category_label, height=360):
 
 
 # Map, insight cards, empty states, footer, and record search
+
+def inside_geofence(lat, lon, min_lat, max_lat, min_lon, max_lon):
+    if pd.isna(lat) or pd.isna(lon):
+        return False
+
+    return min_lat <= float(lat) <= max_lat and min_lon <= float(lon) <= max_lon
+
+
+def row_location_text(row):
+    location_columns = [
+        "camp_location",
+        "helpdesk_location",
+        "helpdesk_camp_location",
+        "helpdesk_village",
+        "household_type",
+    ]
+    values = []
+
+    for column in location_columns:
+        value = row.get(column)
+        if not pd.isna(value):
+            values.append(str(value).lower())
+
+    return " ".join(values)
+
+
+def classify_gps_operational_area(row):
+    lat = row.get("lat")
+    lon = row.get("lon")
+    location_text = row_location_text(row)
+
+    if pd.isna(lat) or pd.isna(lon):
+        return pd.Series(
+            {
+                "gps_area_status": "Invalid or missing GPS",
+                "gps_operational_area": "Missing coordinates",
+                "gps_expected_site": "Unclassified",
+            }
+        )
+
+    lat = float(lat)
+    lon = float(lon)
+
+    in_turkana_west = inside_geofence(lat, lon, 3.45, 4.10, 34.55, 35.10)
+    in_kalobeyei = inside_geofence(lat, lon, 3.68, 3.86, 34.68, 34.86)
+    in_kakuma = inside_geofence(lat, lon, 3.60, 3.82, 34.78, 34.98)
+
+    in_dadaab = inside_geofence(lat, lon, -0.10, 0.25, 40.20, 40.55)
+    in_hagadera = inside_geofence(lat, lon, -0.04, 0.04, 40.32, 40.42)
+    in_ifo = inside_geofence(lat, lon, 0.04, 0.11, 40.28, 40.38)
+    in_ifo_2 = inside_geofence(lat, lon, 0.08, 0.18, 40.28, 40.39)
+    in_dagahaley = inside_geofence(lat, lon, 0.15, 0.24, 40.25, 40.38)
+
+    if in_turkana_west:
+        if "kalobeyei" in location_text or in_kalobeyei:
+            expected_site = "Kalobeyei area"
+        elif "kakuma" in location_text or in_kakuma:
+            expected_site = "Kakuma area"
+        else:
+            expected_site = "Turkana West operational area"
+
+        return pd.Series(
+            {
+                "gps_area_status": "Within expected area",
+                "gps_operational_area": "Turkana County - Turkana West Subcounty",
+                "gps_expected_site": expected_site,
+            }
+        )
+
+    if in_dadaab:
+        if "hagadera" in location_text or in_hagadera:
+            expected_site = "Hagadera camp"
+        elif "ifo 2" in location_text or "ifo2" in location_text or in_ifo_2:
+            expected_site = "Ifo 2 camp"
+        elif "dagahaley" in location_text or in_dagahaley:
+            expected_site = "Dagahaley camp"
+        elif "ifo" in location_text or in_ifo:
+            expected_site = "Ifo camp"
+        else:
+            expected_site = "Dadaab operational area"
+
+        return pd.Series(
+            {
+                "gps_area_status": "Within expected area",
+                "gps_operational_area": "Garissa County - Dadaab Subcounty",
+                "gps_expected_site": expected_site,
+            }
+        )
+
+    return pd.Series(
+        {
+            "gps_area_status": "GPS outlier",
+            "gps_operational_area": "Outside expected Turkana West and Dadaab areas",
+            "gps_expected_site": "Review coordinate",
+        }
+    )
+
 def map_data(frame):
     if frame.empty:
         return pd.DataFrame()
@@ -2312,8 +2468,78 @@ def map_data(frame):
         return pd.DataFrame()
 
     mapped = mapped.rename(columns={"gps_latitude": "lat", "gps_longitude": "lon"})
+    gps_classification = mapped.apply(classify_gps_operational_area, axis=1)
+    mapped = pd.concat([mapped, gps_classification], axis=1)
     return mapped
 
+
+
+def cpv_work_summary(frame):
+    columns = [
+        "CPV",
+        "Records",
+        "Protection concerns",
+        "Information requests",
+        "Partner referrals",
+        "Follow-up required",
+        "Disability records",
+        "Mapped records",
+        "Helpdesk locations",
+        "First interview date",
+        "Latest interview date",
+    ]
+
+    if frame.empty or "staff_name" not in frame.columns:
+        return pd.DataFrame(columns=columns)
+
+    work = frame.copy()
+    work["staff_name"] = work["staff_name"].map(normalize_staff_name)
+    rows = []
+
+    for staff_name, group in work.groupby("staff_name", dropna=False):
+        if str(staff_name) == "[Not recorded]":
+            continue
+
+        mapped_count = 0
+        if {"gps_latitude", "gps_longitude"}.issubset(group.columns):
+            mapped_count = int(group[["gps_latitude", "gps_longitude"]].notna().all(axis=1).sum())
+
+        helpdesk_locations = 0
+        if "helpdesk_location" in group.columns:
+            helpdesk_locations = int(
+                group["helpdesk_location"]
+                .replace("[Not recorded]", pd.NA)
+                .dropna()
+                .astype(str)
+                .nunique()
+            )
+
+        rows.append(
+            {
+                "CPV": staff_name,
+                "Records": len(group),
+                "Protection concerns": int(
+                    group["request_category"].astype(str).eq("Reporting a protection concern").sum()
+                ),
+                "Information requests": int(
+                    group["request_category"].astype(str).eq("Seeking general protection information").sum()
+                ),
+                "Partner referrals": int(
+                    group["referral_status"].astype(str).eq("Referred to partner agency").sum()
+                ),
+                "Follow-up required": int(group["follow_up_required_clean"].astype(str).eq("Yes").sum()),
+                "Disability records": int(group["disability_status"].astype(str).eq("Has Disability").sum()),
+                "Mapped records": mapped_count,
+                "Helpdesk locations": helpdesk_locations,
+                "First interview date": group["interview_date"].min() if "interview_date" in group.columns else pd.NaT,
+                "Latest interview date": group["interview_date"].max() if "interview_date" in group.columns else pd.NaT,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    return pd.DataFrame(rows).sort_values("Records", ascending=False)
 
 def top_value(frame, column):
     if frame.empty or column not in frame.columns:
@@ -2776,7 +3002,7 @@ st.divider()
 # Dashboard tabs
 selected_tab = st.radio(
     "Dashboard section",
-    ["Overview", "Disability", "Concerns", "Information", "Referrals", "Map", "Records"],
+    ["Overview", "Disability", "Concerns", "Information", "Referrals", "Map", "CPV Work", "Records"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -3104,7 +3330,7 @@ if selected_tab == "Disability":
 if selected_tab == "Map":
     st.subheader("Helpdesk Locations Map")
     st.markdown(
-        '<div class="section-note">GPS coordinates represent helpdesk locations, not individual information seekers.</div>',
+        '<div class="section-note">GPS coordinates are parsed from gps_latitude and gps_longitude. They are checked against expected operational areas in Turkana West and Dadaab.</div>',
         unsafe_allow_html=True,
     )
 
@@ -3115,9 +3341,9 @@ if selected_tab == "Map":
     else:
         st.map(mapped_records[["lat", "lon"]], use_container_width=True)
 
-        map_summary = (
+        gps_status_summary = (
             mapped_records.groupby(
-                ["camp_location", "helpdesk_location", "lat", "lon"],
+                ["gps_area_status", "gps_operational_area", "gps_expected_site"],
                 dropna=False,
             )
             .size()
@@ -3125,30 +3351,73 @@ if selected_tab == "Map":
             .sort_values("records", ascending=False)
         )
 
-        staff_summary = (
-            filtered_records.groupby("staff_name", dropna=False)
+        st.subheader("GPS Area Classification")
+        st.dataframe(
+            style_records_table(gps_status_summary),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        map_summary = (
+            mapped_records.groupby(
+                [
+                    "gps_area_status",
+                    "camp_location",
+                    "helpdesk_location",
+                    "lat",
+                    "lon",
+                ],
+                dropna=False,
+            )
             .size()
             .reset_index(name="records")
             .sort_values("records", ascending=False)
         )
 
-        map_cols = st.columns(2)
+        st.subheader("Mapped Helpdesk Points")
+        st.dataframe(
+            style_records_table(map_summary),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-        with map_cols[0]:
-            st.subheader("Mapped Helpdesk Points")
+        gps_outliers = mapped_records[mapped_records["gps_area_status"].eq("GPS outlier")]
+
+        if not gps_outliers.empty:
+            st.subheader("GPS Outliers for Review")
+            outlier_summary = (
+                gps_outliers.groupby(
+                    ["camp_location", "helpdesk_location", "staff_name", "lat", "lon"],
+                    dropna=False,
+                )
+                .size()
+                .reset_index(name="records")
+                .sort_values("records", ascending=False)
+            )
             st.dataframe(
-                style_records_table(map_summary),
+                style_records_table(outlier_summary),
                 use_container_width=True,
                 hide_index=True,
             )
 
-        with map_cols[1]:
-            st.subheader("Records by Staff")
-            st.dataframe(
-                style_records_table(staff_summary),
-                use_container_width=True,
-                hide_index=True,
-            )
+
+# CPV work tab
+if selected_tab == "CPV Work":
+    st.subheader("CPV Work Summary")
+    st.markdown(
+        '<div class="section-note">Staff names are normalized before summarizing records, referrals, follow-up, disability records, mapped records, and helpdesk coverage.</div>',
+        unsafe_allow_html=True,
+    )
+
+    cpv_records = filtered_records[filtered_records["staff_name"].astype(str).ne("[Not recorded]")].copy()
+    draw_count_bar(cpv_records, "staff_name", "CPV", height=380)
+
+    cpv_summary = cpv_work_summary(filtered_records)
+    st.dataframe(
+        style_records_table(cpv_summary),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 # Records tab
@@ -3215,4 +3484,6 @@ if selected_tab == "Records":
 
 # Developer footer
 show_footer()
+
+
 
