@@ -69,17 +69,17 @@ a GPS map, caseworker (CPV) productivity, and a searchable record viewer.
 ## Project structure
 ```
 tdh-kenya-helpdesk-dashboard/
-├── app.py                  # the full Streamlit application
+├── helpdesk.py             # the full Streamlit application
 ├── requirements.txt        # pinned dependencies
 ├── README.md               # this file
 ├── .gitignore              # excludes data/secrets/caches from version control
 ├── assets/
-│   ├── styles.css          # all dashboard styling (edit here, not in app.py)
+│   ├── styles.css          # all dashboard styling (edit here, not in helpdesk.py)
 │   └── README.txt          # drop tdh-logo.png / developer-logo.png here
 └── data/
     └── README.txt          # drop HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx here
 ```
-The app resolves these paths relative to `app.py`:
+The app resolves these paths relative to `helpdesk.py`:
 - Tdh header logo → `assets/tdh-logo.png` (optional; the banner renders without it).
 - Developer logo → `assets/developer-logo.png` (optional; shown in the footer card.
   Falls back to text-only if absent).
@@ -92,7 +92,7 @@ The app resolves these paths relative to `app.py`:
 - Theme colours are CSS variables at the top of `assets/styles.css` (`--tdh-green`,
   `--tdh-gold`, etc.) — change them once to re-skin the whole dashboard.
 - The app/version label shown in the footer is set by `APP_VERSION` and
-  `APP_VERSION_DATE` near the top of `app.py`.
+  `APP_VERSION_DATE` near the top of `helpdesk.py`.
 
 ---
 
@@ -123,11 +123,11 @@ The ZIP ships with **placeholders only** — add your real files before running:
    the footer).
 
 If the filename differs, either rename your file or edit `DATA_FILE_PATH` near the top
-of `app.py`.
+of `helpdesk.py`.
 
 ## Running the app
 ```bash
-streamlit run app.py
+streamlit run helpdesk.py
 ```
 Streamlit opens the dashboard in your browser (default `http://localhost:8501`).
 Use the **sidebar** to filter and the **section selector** at the top to switch tabs.
@@ -231,7 +231,7 @@ before display and export. Before sharing more widely, also consider:
 ---
 
 ## Configuration reference
-Constants near the top of `app.py` you may want to adjust:
+Constants near the top of `helpdesk.py` you may want to adjust:
 | Constant | Purpose |
 |----------|---------|
 | `DATA_FILE_PATH`, `LOGO_PATH` | Source locations. |
@@ -259,9 +259,10 @@ your operational sites change.
 | `openpyxl` not found | `pip install -r requirements.txt` (openpyxl is the Excel engine pandas needs). |
 
 ## Deployment
-- **Streamlit Community Cloud:** push `app.py` + `requirements.txt` to a repo and point
-  the app at `app.py`. Add the data file as a private artifact or via upload — do **not**
-  commit sensitive data publicly.
+- **Streamlit Community Cloud:** push `helpdesk.py`, `requirements.txt`, `assets/`,
+  and the required data file to the repo, then point the app at `helpdesk.py`.
+  In **Advanced settings**, keep Python on **3.12** to match these pinned packages.
+  Add sensitive data only in a private repo or private deployment context.
 - **Docker (sketch):**
   ```dockerfile
   FROM python:3.12-slim
@@ -270,7 +271,7 @@ your operational sites change.
   RUN pip install --no-cache-dir -r requirements.txt
   COPY . .
   EXPOSE 8501
-  CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0"]
+  CMD ["streamlit", "run", "helpdesk.py", "--server.address=0.0.0.0"]
   ```
 
 ## Known notes

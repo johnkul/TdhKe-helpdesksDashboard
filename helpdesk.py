@@ -2,6 +2,7 @@ from pathlib import Path
 import base64
 import html
 import os
+import pickle
 import re
 
 import altair as alt
@@ -16,6 +17,8 @@ LOGO_PATH = BASE_DIR / "assets" / "tdh-logo.png"
 DEVELOPER_LOGO_PATH = BASE_DIR / "assets" / "developer-logo.png"
 STYLES_PATH = BASE_DIR / "assets" / "styles.css"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
+PROCESSED_CACHE_PATH = BASE_DIR / "data" / "processed" / "helpdesk_processed_cache.pkl"
+PROCESSED_CACHE_VERSION = "2026-06-30-v2"
 
 APP_VERSION = "Version 1.0"
 APP_VERSION_DATE = "June 2026"
@@ -1020,6 +1023,29 @@ def load_data(file_signature):
     if not DATA_FILE_PATH.exists():
         st.error(f"File not found: {DATA_FILE_PATH}")
         st.stop()
+
+    # Fast path for deployed apps: load already-processed data if a matching
+    # processed cache exists. This avoids reparsing Excel and rerunning all
+    # transformations on Streamlit Cloud cold starts. Generate this cache once
+    # locally by running the app, then commit data/processed/helpdesk_processed_cache.pkl.
+    processed_cache_key = {
+        "version": PROCESSED_CACHE_VERSION,
+        # Use file size, not modified time, so a cache generated locally and
+        # committed to GitHub can still match after Streamlit Cloud checkout
+        # changes file timestamps.
+        "source_size": file_signature[2],
+    }
+    if PROCESSED_CACHE_PATH.exists():
+        try:
+            with PROCESSED_CACHE_PATH.open("rb") as cache_file:
+                cached_payload = pickle.load(cache_file)
+            if cached_payload.get("cache_key") == processed_cache_key:
+                return cached_payload["data"]
+        except Exception:
+            # If the processed cache is stale/corrupt, fall back to rebuilding
+            # from Excel rather than blocking the app.
+            pass
+
     try:
         workbook = pd.ExcelFile(DATA_FILE_PATH)
     except Exception as error:
@@ -1283,7 +1309,25 @@ def load_data(file_signature):
             ],
         }
     )
-    return dashboard_records, secure_records, protection, information, referrals, kpis
+
+    processed_data = (dashboard_records, secure_records, protection, information, referrals, kpis)
+    try:
+        PROCESSED_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with PROCESSED_CACHE_PATH.open("wb") as cache_file:
+            pickle.dump(
+                {
+                    "cache_key": processed_cache_key,
+                    "data": processed_data,
+                },
+                cache_file,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+    except Exception:
+        # Processed-cache writing is an optimization only; the app should still
+        # work even when the filesystem is read-only.
+        pass
+
+    return processed_data
 
 # -----------------------------------------------------------------------------
 # Filter, chart, table, and UI helpers
