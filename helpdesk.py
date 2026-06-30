@@ -1015,7 +1015,7 @@ def build_label_map(mapping, prefix):
     return label_map
 
 
-@st.cache_data(show_spinner="Loading latest helpdesk dataset...")
+@st.cache_data(show_spinner="Loading latest helpdesk dataset...", persist="disk")
 def load_data(file_signature):
     if not DATA_FILE_PATH.exists():
         st.error(f"File not found: {DATA_FILE_PATH}")
@@ -1983,7 +1983,8 @@ filters = {
 }
 
 filtered_records = apply_filters(records, filters)
-filtered_secure_records = apply_filters(secure_records, filters)
+# secure_records contains PII, so it is filtered lazily only after the protected
+# table is unlocked instead of during every app startup/rerun.
 filtered_protection = apply_filters(protection, filters)
 filtered_information = apply_filters(information, filters)
 filtered_referrals = apply_filters(referrals, filters)
@@ -2498,9 +2499,11 @@ if selected_tab == "DQA":
         '<div class="section-note">Includes records where concern_educational_support and/or concern_school_dropout_risk_or_dropped_out was selected. This table contains PII and requires a password.</div>',
         unsafe_allow_html=True,
     )
-    protected_education_table = education_concern_followup_table(filtered_secure_records, filtered_referrals)
-    st.caption(f"Matching education-concern records: {format_number(len(protected_education_table))}")
+    st.caption("Unlock the table to calculate and display matching PII records.")
     if pii_access_granted("dqa_pii_password"):
+        filtered_secure_records = apply_filters(secure_records, filters)
+        protected_education_table = education_concern_followup_table(filtered_secure_records, filtered_referrals)
+        st.caption(f"Matching education-concern records: {format_number(len(protected_education_table))}")
         if protected_education_table.empty:
             st.info("No matching education-concern records for the current filters.")
         else:
@@ -2535,9 +2538,11 @@ if selected_tab == "Records":
             '<div class="section-note">Password-protected table for concern_educational_support and/or concern_school_dropout_risk_or_dropped_out. Includes CPV, child/name, individual number, phone, location detail, selected concern, and referred agency.</div>',
             unsafe_allow_html=True,
         )
-        protected_education_table = education_concern_followup_table(filtered_secure_records, filtered_referrals)
-        st.caption(f"Matching education-concern records: {format_number(len(protected_education_table))}")
+        st.caption("Unlock the table to calculate and display matching PII records.")
         if pii_access_granted("records_pii_password"):
+            filtered_secure_records = apply_filters(secure_records, filters)
+            protected_education_table = education_concern_followup_table(filtered_secure_records, filtered_referrals)
+            st.caption(f"Matching education-concern records: {format_number(len(protected_education_table))}")
             if protected_education_table.empty:
                 st.info("No matching education-concern records for the current filters.")
             else:
