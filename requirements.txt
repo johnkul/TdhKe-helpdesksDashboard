@@ -1,4 +1,7 @@
-streamlit
-pandas
-plotly
-openpyxl
+# Tdh Kenya Helpdesk Data Dashboard — pinned dependencies
+# Python 3.9 – 3.12 supported. Install with:  pip install -r requirements.txt
+
+streamlit==1.40.2      # web app framework (provides st.* API, caching, widgets)
+pandas==2.2.3          # data loading, reshaping, derivations
+altair==5.4.1          # declarative charts (bars, donuts, line)
+openpyxl==3.1.5        # required by pandas to read the .xlsx workbook
