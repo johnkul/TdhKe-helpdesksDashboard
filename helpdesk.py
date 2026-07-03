@@ -1377,9 +1377,14 @@ def apply_filters(frame, filters):
     return filtered
 
 
-def gender_color(field):
-    available = [gender for gender in GENDER_ORDER]
-    return alt.Color(field, title="Gender", scale=alt.Scale(domain=available, range=[GENDER_COLORS[g] for g in available]), sort=available)
+def gender_color(field, available=None):
+    available = [gender for gender in (available or GENDER_ORDER) if gender in GENDER_COLORS]
+    return alt.Color(
+        field,
+        title="Gender",
+        scale=alt.Scale(domain=available, range=[GENDER_COLORS[g] for g in available]),
+        sort=available,
+    )
 
 
 def polish_chart(chart):
@@ -1569,6 +1574,75 @@ def draw_total_donut(frame, category_column, category_label, height=320, min_lab
     st.altair_chart(polish_chart((donut + labels).properties(height=height)), use_container_width=True)
 
 
+def draw_request_type_bar(frame, height=190):
+    if frame.empty or "request_category" not in frame.columns:
+        st.info("No records match the selected filters.")
+        return
+
+    summary = (
+        frame.groupby("request_category", dropna=False)
+        .size()
+        .reset_index(name="Records")
+        .sort_values("Records", ascending=False)
+    )
+
+    if summary.empty or summary["Records"].sum() == 0:
+        st.info("No request type data for the selected filters.")
+        return
+
+    display_labels = {
+        "Reporting a protection concern": "Protection concern",
+        "Seeking general protection information": "General information",
+    }
+
+    summary["request_category"] = summary["request_category"].fillna("[Missing]").astype(str)
+    summary["Request type"] = summary["request_category"].replace(display_labels)
+    summary["Share"] = summary["Records"] / summary["Records"].sum()
+    summary["Label"] = summary.apply(
+        lambda row: f"{row['Records']:,.0f} ({row['Share']:.1%})",
+        axis=1,
+    )
+
+    type_order = summary["Request type"].tolist()
+    type_colors = ["#2F7D69", "#D9A441", "#2563EB", "#DB2777", "#64748B"]
+
+    base = alt.Chart(summary).encode(
+        y=alt.Y(
+            "Request type:N",
+            sort=type_order,
+            title=None,
+            axis=alt.Axis(labelLimit=360, labelFontSize=12, labelPadding=8),
+        ),
+        x=alt.X("Records:Q", title="Records"),
+    )
+
+    bars = base.mark_bar(cornerRadiusEnd=4).encode(
+        color=alt.Color(
+            "Request type:N",
+            legend=None,
+            scale=alt.Scale(domain=type_order, range=type_colors[: len(type_order)]),
+        ),
+        tooltip=[
+            alt.Tooltip("Request type:N", title="Request type"),
+            alt.Tooltip("Records:Q", title="Records", format=","),
+            alt.Tooltip("Share:Q", title="Share", format=".1%"),
+        ],
+    )
+
+    labels = base.mark_text(
+        align="left",
+        baseline="middle",
+        dx=8,
+        fontSize=12,
+        fontWeight=800,
+        color="#1E293B",
+    ).encode(
+        text=alt.Text("Label:N"),
+    )
+
+    st.altair_chart(polish_chart((bars + labels).properties(height=height)), use_container_width=True)
+
+
 def draw_status_donut_pair(frame, status_column, height=300):
     if frame.empty or status_column not in frame.columns:
         st.info("No records match the selected filters.")
@@ -1585,24 +1659,42 @@ def draw_monthly_gender_column_bar(frame, height=340):
     if frame.empty:
         st.info("No records match the selected filters.")
         return
-    monthly = frame.groupby(["year_month", "information_seeker_gender"], dropna=False).size().reset_index(name="Records")
+
+    monthly = (
+        frame.groupby(["year_month", "information_seeker_gender"], dropna=False)
+        .size()
+        .reset_index(name="Records")
+    )
+
     if monthly.empty:
         st.info("No monthly trend data for the selected filters.")
         return
+
+    monthly["information_seeker_gender"] = monthly["information_seeker_gender"].fillna("[Missing]").astype(str)
+    available_genders = [
+        gender
+        for gender in GENDER_ORDER
+        if gender in set(monthly["information_seeker_gender"].tolist())
+    ]
     month_order = sorted(monthly["year_month"].dropna().astype(str).unique().tolist())
+
     line = (
         alt.Chart(monthly)
         .mark_line(point=True, strokeWidth=3)
         .encode(
             x=alt.X("year_month:N", sort=month_order, title=None, axis=alt.Axis(labelAngle=-30, labelFontSize=11)),
             y=alt.Y("Records:Q", title="Records"),
-            color=gender_color("information_seeker_gender:N"),
-            tooltip=[alt.Tooltip("year_month:N", title="Month"), alt.Tooltip("information_seeker_gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=",")],
+            color=gender_color("information_seeker_gender:N", available=available_genders),
+            tooltip=[
+                alt.Tooltip("year_month:N", title="Month"),
+                alt.Tooltip("information_seeker_gender:N", title="Gender"),
+                alt.Tooltip("Records:Q", title="Records", format=","),
+            ],
         )
         .properties(height=height)
     )
-    st.altair_chart(polish_chart(line), use_container_width=True)
 
+    st.altair_chart(polish_chart(line), use_container_width=True)
 
 def draw_count_bar(frame, category_column, category_label, height=360):
     if frame.empty or category_column not in frame.columns:
@@ -2120,17 +2212,14 @@ selected_tab = st.radio("Dashboard section", ["Overview", "Disability", "Concern
 # Overview tab
 # -----------------------------------------------------------------------------
 if selected_tab == "Overview":
-    left, right = st.columns([1.2, 1])
-    with left:
-        st.subheader("Monthly Requests by gender")
-        draw_monthly_gender_column_bar(filtered_records, height=340)
-    with right:
-        st.subheader("Request type by information")
-        draw_total_donut(filtered_records, "request_category", "Request type", height=340)
+    st.subheader("Monthly Requests by Gender")
+    draw_monthly_gender_column_bar(filtered_records, height=390)
+
+    st.subheader("Requests by Type")
+    draw_request_type_bar(filtered_records, height=190)
 
     st.subheader("Request Type Table")
     show_gender_table(filtered_records, "request_category", "Request type")
-
     st.divider()
     st.subheader("Demographics by gender")
     st.caption("Information seeker type")
@@ -2613,3 +2702,5 @@ if selected_tab == "Records":
         st.dataframe(style_records_table(kpis), use_container_width=True, hide_index=True)
 
 show_footer()
+
+
