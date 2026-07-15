@@ -95,6 +95,17 @@ STATUS_COLORS = {
     "No Impairment": "#94A3B8",
 }
 
+CPV_METRIC_COLORS = {
+    "Records": "#2F7D69",
+    "Protection concerns": "#1F6FB2",
+    "Information requests": "#6D5BD0",
+    "Partner referrals": "#059669",
+    "Follow-up required": "#D9A441",
+    "Disability records": "#DB2777",
+    "Mapped records": "#14B8A6",
+    "Helpdesk locations": "#64748B",
+}
+
 WGQ_DISABILITY_DOMAINS = {
     "difficulty_seeing": "Visual Impairment",
     "difficulty_hearing": "Hearing Impairment",
@@ -1069,19 +1080,12 @@ def load_data(file_signature):
             pass
 
     try:
-        workbook = pd.ExcelFile(DATA_FILE_PATH)
+        records = pd.read_excel(DATA_FILE_PATH)
     except Exception as error:
-        st.error(f"Could not open the workbook: {error}")
+        st.error(f"Could not read the workbook: {error}")
         st.stop()
 
-    data_sheet = "cleaned_data" if "cleaned_data" in workbook.sheet_names else workbook.sheet_names[0]
-    records = workbook.parse(data_sheet)
     mapping = None
-    if "Column Mapping" in workbook.sheet_names:
-        try:
-            mapping = workbook.parse("Column Mapping")
-        except Exception:
-            mapping = None
 
     required_columns = [
         "interview_date",
@@ -2253,6 +2257,32 @@ def filter_section_badge(number, title, detail, tone):
     )
 
 
+def filter_selection_feedback(label, values, max_items=4):
+    if not values:
+        return
+
+    values = list(values)
+    shown_values = values[:max_items]
+    extra_count = len(values) - len(shown_values)
+    chips = "".join(
+        f'<span class="filter-selected-chip">{escape_text(value)}</span>'
+        for value in shown_values
+    )
+
+    if extra_count > 0:
+        chips += f'<span class="filter-selected-chip filter-selected-more">+{extra_count} more</span>'
+
+    st.markdown(
+        f"""
+        <div class="filter-selected-summary">
+            <span class="filter-selected-label">Selected {escape_text(label)}</span>
+            <div class="filter-selected-chips">{chips}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def section_header(title, note=None):
     st.markdown(f"""<div class="section-header"><span class="section-accent"></span><span class="section-title">{escape_text(title)}</span></div>""", unsafe_allow_html=True)
     if note:
@@ -2628,6 +2658,7 @@ with st.sidebar:
         camp_options = [v for v, _ in filter_options_with_counts(date_filtered_records["camp_location"])]
         st.markdown('<div class="filter-label">Camp location</div>', unsafe_allow_html=True)
         selected_camp_locations = multi_choice_selector("Camp", camp_options, key="camp_location_filter", help_text="Select one or more camps")
+        filter_selection_feedback("camp", selected_camp_locations)
 
         if selected_camp_locations:
             camp_filtered_records = date_filtered_records[
@@ -2646,6 +2677,7 @@ with st.sidebar:
                 key="helpdesk_location_filter",
                 help_text="Select helpdesk locations after choosing camp location",
             )
+            filter_selection_feedback("helpdesk", selected_helpdesk_locations)
         else:
             selected_helpdesk_locations = []
             st.markdown(
@@ -2665,16 +2697,19 @@ with st.sidebar:
         type_options = [v for v, _ in filter_options_with_counts(helpdesk_filtered_records["information_seeker_type"])]
         st.markdown('<div class="filter-label">Information seeker type</div>', unsafe_allow_html=True)
         selected_information_seeker_types = multi_choice_selector("Information seeker type", type_options, key="information_seeker_type_filter")
+        filter_selection_feedback("seeker type", selected_information_seeker_types)
         seeker_filtered_records = helpdesk_filtered_records[helpdesk_filtered_records["information_seeker_type"].astype(str).isin(selected_information_seeker_types)].copy() if selected_information_seeker_types else helpdesk_filtered_records.copy()
 
         gender_options = [v for v, _ in filter_options_with_counts(seeker_filtered_records["information_seeker_gender"], ordered_values=GENDER_ORDER)]
         st.markdown('<div class="filter-label">Gender</div>', unsafe_allow_html=True)
         selected_genders = multi_choice_selector("Gender", gender_options, key="information_seeker_gender_filter")
+        filter_selection_feedback("gender", selected_genders)
         gender_filtered_records = seeker_filtered_records[seeker_filtered_records["information_seeker_gender"].astype(str).isin(selected_genders)].copy() if selected_genders else seeker_filtered_records.copy()
 
         age_options = [v for v, _ in filter_options_with_counts(gender_filtered_records["age_group"], ordered_values=AGE_GROUP_ORDER)]
         st.markdown('<div class="filter-label">Age group</div>', unsafe_allow_html=True)
         selected_age_groups = multi_choice_selector("Age group", age_options, key="age_group_filter")
+        filter_selection_feedback("age group", selected_age_groups)
 
     age_filtered_records = gender_filtered_records[gender_filtered_records["age_group"].astype(str).isin(selected_age_groups)].copy() if selected_age_groups else gender_filtered_records.copy()
 
@@ -2688,6 +2723,7 @@ with st.sidebar:
         request_options = [v for v, _ in filter_options_with_counts(age_filtered_records["request_category"])]
         st.markdown('<div class="filter-label">Request category</div>', unsafe_allow_html=True)
         selected_request_categories = multi_choice_selector("Request category", request_options, key="request_category_filter")
+        filter_selection_feedback("request category", selected_request_categories)
 
     selected_filter_groups = [
         selected_camp_locations,
@@ -3202,12 +3238,13 @@ if selected_tab == "CPV Work":
         )
         cpv_order = cpv_chart_data["CPV"].astype(str).tolist()
         cpv_chart_height = max(280, min(760, 34 * len(cpv_order) + 80))
+        cpv_chart_color = CPV_METRIC_COLORS.get(cpv_chart_metric, "#2F7D69")
 
         cpv_chart = (
             alt.Chart(cpv_chart_data)
             .mark_bar(
                 cornerRadiusEnd=6,
-                color="#2F7D69",
+                color=cpv_chart_color,
                 opacity=0.94,
                 stroke="#FFFFFF",
                 strokeWidth=0.7,
@@ -3245,7 +3282,7 @@ if selected_tab == "CPV Work":
                 dx=5,
                 fontSize=11,
                 fontWeight=700,
-                color="#1E293B",
+                color="#12312F",
             )
             .encode(
                 y=alt.Y("CPV:N", sort=cpv_order, title=None),
@@ -3259,8 +3296,11 @@ if selected_tab == "CPV Work":
             use_container_width=True,
         )
 
-        st.caption("Full table — all CPVs, unaffected by the chart slicers")
-        st.dataframe(style_records_table(cpv_summary), use_container_width=True, hide_index=True)
+        st.markdown(
+            '<div class="cpv-table-title">Full CPV Work Summary — all CPVs, unaffected by chart slicers</div>',
+            unsafe_allow_html=True,
+        )
+        render_dashboard_table(cpv_summary, label_column="CPV", max_height=620)
 
 if selected_tab == "DQA":
     st.subheader("Data Quality Assurance (DQA)")
