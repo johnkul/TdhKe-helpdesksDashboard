@@ -1538,11 +1538,15 @@ def style_total_table(table, label_column):
             return "color: #94A3B8; font-style: italic;"
         return ""
 
-    return (
+    styled = (
         table.style.format(formatters)
         .apply(highlight_total_row, axis=1)
         .apply(highlight_total_column, axis=0)
-        .applymap(mute_missing)
+    )
+    styled = styled.map(mute_missing) if hasattr(styled, "map") else styled.applymap(mute_missing)
+
+    return (
+        styled
         .set_properties(
             subset=label_columns,
             **{
@@ -1634,11 +1638,15 @@ def style_records_table(table):
             return "color: #94A3B8; font-style: italic;"
         return ""
 
-    return (
+    styled = (
         display_table.style.format(formatters)
         .apply(zebra_rows, axis=1)
         .apply(highlight_total_like_rows, axis=1)
-        .applymap(mute_missing)
+    )
+    styled = styled.map(mute_missing) if hasattr(styled, "map") else styled.applymap(mute_missing)
+
+    return (
+        styled
         .set_properties(
             subset=descriptor_columns,
             **{
