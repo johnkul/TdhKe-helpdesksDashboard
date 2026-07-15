@@ -65,12 +65,34 @@ ADULT_AGE_GROUPS = {"18-35 Years", "36-49 Years", "50-64 Years", "65 Years and A
 
 GENDER_ORDER = ["Girl", "Boy", "Woman", "Man", "Transgender", "[Missing]"]
 GENDER_COLORS = {
-    "Girl": "#7C3AED",
+    "Girl": "#8B5CF6",
     "Boy": "#2563EB",
     "Woman": "#DB2777",
     "Man": "#059669",
-    "Transgender": "#F59E0B",
-    "[Missing]": "#9CA3AF",
+    "Transgender": "#D9A441",
+    "[Missing]": "#94A3B8",
+}
+
+CHART_CATEGORY_COLORS = [
+    "#2F7D69",
+    "#1F6FB2",
+    "#D9A441",
+    "#8B5CF6",
+    "#DB2777",
+    "#059669",
+    "#F97316",
+    "#14B8A6",
+    "#64748B",
+    "#A855F7",
+]
+
+STATUS_COLORS = {
+    "Has Disability": "#2F7D69",
+    "No Disability": "#94A3B8",
+    "Has disability": "#2F7D69",
+    "No disability": "#94A3B8",
+    "Has Impairment": "#2F7D69",
+    "No Impairment": "#94A3B8",
 }
 
 WGQ_DISABILITY_DOMAINS = {
@@ -1384,13 +1406,73 @@ def gender_color(field, available=None):
         title="Gender",
         scale=alt.Scale(domain=available, range=[GENDER_COLORS[g] for g in available]),
         sort=available,
+        legend=alt.Legend(symbolType="circle", orient="bottom"),
     )
+
+
+def category_color(field, title=None, domain=None, legend=True):
+    color_kwargs = {
+        "title": title,
+        "scale": alt.Scale(range=CHART_CATEGORY_COLORS),
+    }
+
+    if domain:
+        color_kwargs["scale"] = alt.Scale(
+            domain=domain,
+            range=CHART_CATEGORY_COLORS[: len(domain)],
+        )
+
+    if legend:
+        color_kwargs["legend"] = alt.Legend(symbolType="circle", orient="bottom")
+    else:
+        color_kwargs["legend"] = None
+
+    return alt.Color(field, **color_kwargs)
 
 
 def polish_chart(chart):
     return (
-        chart.configure_axis(labelColor="#334155", titleColor="#1E293B", gridColor="#E2E8F0", domainColor="#CBD5D1", tickColor="#CBD5D1", labelFontSize=12, titleFontSize=13, titleFontWeight=600, labelLimit=1000)
-        .configure_legend(labelColor="#1E293B", titleColor="#1E293B", labelFontSize=12, titleFontSize=13, titleFontWeight=600, orient="bottom", symbolType="circle", symbolSize=120)
+        chart.configure_axis(
+            labelColor="#334155",
+            titleColor="#1E293B",
+            gridColor="#E2E8F0",
+            domainColor="#CBD5D1",
+            tickColor="#CBD5D1",
+            labelFontSize=12,
+            titleFontSize=13,
+            titleFontWeight=700,
+            labelLimit=1000,
+            labelPadding=6,
+            titlePadding=10,
+        )
+        .configure_axisY(grid=True)
+        .configure_axisX(grid=False)
+        .configure_legend(
+            labelColor="#1E293B",
+            titleColor="#1E293B",
+            labelFontSize=12,
+            titleFontSize=13,
+            titleFontWeight=700,
+            orient="bottom",
+            symbolType="circle",
+            symbolSize=125,
+            padding=10,
+        )
+        .configure_header(
+            labelColor="#12312F",
+            titleColor="#12312F",
+            labelFontSize=12,
+            titleFontSize=13,
+            labelFontWeight=700,
+            titleFontWeight=800,
+        )
+        .configure_title(
+            color="#12312F",
+            fontSize=15,
+            fontWeight=800,
+            anchor="start",
+            offset=10,
+        )
         .configure_view(strokeWidth=0)
         .configure(background="transparent", font="Inter, Segoe UI, system-ui, sans-serif")
     )
@@ -1424,28 +1506,92 @@ def gender_pivot_table(frame, category_column, category_label, top_n=None):
 
 def style_total_table(table, label_column):
     numeric_columns = [col for col in table.columns if col != label_column]
+    label_columns = [label_column] if label_column in table.columns else []
+
+    formatters = {}
+    for col in numeric_columns:
+        if pd.api.types.is_numeric_dtype(table[col]):
+            formatters[col] = "{:,.0f}"
 
     def highlight_total_row(row):
         if row[label_column] == "Total":
-            return ["background-color: #DDEDE5; color: #102A2A; font-weight: 800;" for _ in row]
-        background = "#FFFFFF" if row.name % 2 == 0 else "#F7FAF8"
-        return [f"background-color: {background};" for _ in row]
+            return [
+                "background-color: #DCEBE4; color: #0B2523; font-weight: 850; "
+                "border-top: 2px solid #2F7D69;"
+                for _ in row
+            ]
+
+        background = "#FFFFFF" if row.name % 2 == 0 else "#F6FAF8"
+        return [f"background-color: {background}; color: #1E293B;" for _ in row]
 
     def highlight_total_column(column):
         if column.name == "Total":
-            return ["background-color: #FFF4D8; color: #102A2A; font-weight: 800;" for _ in column]
+            return [
+                "background-color: #FFF1CC; color: #0B2523; font-weight: 850; "
+                "border-left: 2px solid #E3B341;"
+                for _ in column
+            ]
         return ["" for _ in column]
 
+    def mute_missing(value):
+        if str(value) in ["[Missing]", "[Not recorded]", "None", "nan", "NaT"]:
+            return "color: #94A3B8; font-style: italic;"
+        return ""
+
     return (
-        table.style.format({col: "{:,.0f}" for col in numeric_columns})
+        table.style.format(formatters)
         .apply(highlight_total_row, axis=1)
         .apply(highlight_total_column, axis=0)
-        .set_properties(subset=[label_column], **{"text-align": "left", "font-weight": "650", "white-space": "normal"})
-        .set_properties(subset=numeric_columns, **{"text-align": "center", "font-variant-numeric": "tabular-nums"})
-        .set_table_styles([
-            {"selector": "th", "props": [("background-color", "#12312F"), ("color", "#FFFFFF"), ("font-weight", "800"), ("text-align", "center"), ("border", "1px solid #D8E2DC")]},
-            {"selector": "td", "props": [("border", "1px solid #E5E7EB"), ("padding", "7px 9px")]},
-        ])
+        .applymap(mute_missing)
+        .set_properties(
+            subset=label_columns,
+            **{
+                "text-align": "left",
+                "font-weight": "700",
+                "white-space": "normal",
+                "min-width": "180px",
+            },
+        )
+        .set_properties(
+            subset=numeric_columns,
+            **{
+                "text-align": "right",
+                "font-variant-numeric": "tabular-nums",
+                "font-feature-settings": '"tnum"',
+                "min-width": "72px",
+            },
+        )
+        .set_table_styles(
+            [
+                {
+                    "selector": "th",
+                    "props": [
+                        ("background-color", "#12312F"),
+                        ("color", "#FFFFFF"),
+                        ("font-weight", "850"),
+                        ("text-align", "center"),
+                        ("border", "1px solid #D8E2DC"),
+                        ("border-bottom", "3px solid #D9A441"),
+                        ("padding", "10px 12px"),
+                        ("white-space", "normal"),
+                    ],
+                },
+                {
+                    "selector": "td",
+                    "props": [
+                        ("border", "1px solid #E3ECE7"),
+                        ("padding", "8px 10px"),
+                        ("vertical-align", "middle"),
+                    ],
+                },
+                {
+                    "selector": "tbody tr:hover td",
+                    "props": [
+                        ("background-color", "#FFF8E7"),
+                    ],
+                },
+            ]
+        )
     )
 
 
@@ -1463,16 +1609,172 @@ def style_records_table(table):
         else:
             formatters[col] = "{:,.0f}"
 
+    descriptor_columns = [
+        col
+        for col in display_table.columns
+        if col not in numeric_columns and col not in date_columns
+    ]
+
     def zebra_rows(row):
-        background = "#FFFFFF" if row.name % 2 == 0 else "#F7FAF8"
-        return [f"background-color: {background};" for _ in row]
+        background = "#FFFFFF" if row.name % 2 == 0 else "#F6FAF8"
+        return [f"background-color: {background}; color: #1E293B;" for _ in row]
+
+    def highlight_total_like_rows(row):
+        first_value = str(row.iloc[0]) if len(row) else ""
+        if first_value == "Total":
+            return [
+                "background-color: #DCEBE4; color: #0B2523; font-weight: 850; "
+                "border-top: 2px solid #2F7D69;"
+                for _ in row
+            ]
+        return ["" for _ in row]
+
+    def mute_missing(value):
+        if str(value) in ["[Missing]", "[Not recorded]", "None", "nan", "NaT"]:
+            return "color: #94A3B8; font-style: italic;"
+        return ""
 
     return (
         display_table.style.format(formatters)
         .apply(zebra_rows, axis=1)
-        .set_properties(**{"border": "1px solid #E5E7EB", "padding": "7px 9px", "white-space": "normal"})
-        .set_table_styles([{"selector": "th", "props": [("background-color", "#12312F"), ("color", "#FFFFFF"), ("font-weight", "800"), ("text-align", "left"), ("border", "1px solid #D8E2DC")]}])
+        .apply(highlight_total_like_rows, axis=1)
+        .applymap(mute_missing)
+        .set_properties(
+            subset=descriptor_columns,
+            **{
+                "text-align": "left",
+                "white-space": "normal",
+                "min-width": "150px",
+            },
+        )
+        .set_properties(
+            subset=numeric_columns,
+            **{
+                "text-align": "right",
+                "font-variant-numeric": "tabular-nums",
+                "font-feature-settings": '"tnum"',
+                "min-width": "72px",
+            },
+        )
+        .set_properties(
+            subset=date_columns,
+            **{
+                "text-align": "left",
+                "white-space": "nowrap",
+                "min-width": "112px",
+            },
+        )
+        .set_table_styles(
+            [
+                {
+                    "selector": "th",
+                    "props": [
+                        ("background-color", "#12312F"),
+                        ("color", "#FFFFFF"),
+                        ("font-weight", "850"),
+                        ("text-align", "left"),
+                        ("border", "1px solid #D8E2DC"),
+                        ("border-bottom", "3px solid #D9A441"),
+                        ("padding", "10px 12px"),
+                        ("white-space", "normal"),
+                    ],
+                },
+                {
+                    "selector": "td",
+                    "props": [
+                        ("border", "1px solid #E3ECE7"),
+                        ("padding", "8px 10px"),
+                        ("vertical-align", "middle"),
+                    ],
+                },
+                {
+                    "selector": "tbody tr:hover td",
+                    "props": [
+                        ("background-color", "#FFF8E7"),
+                    ],
+                },
+            ]
+        )
     )
+
+
+def display_table_value(value):
+    if pd.isna(value):
+        return ""
+
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%d %b %Y")
+
+    if hasattr(value, "strftime") and not isinstance(value, str):
+        try:
+            return value.strftime("%d %b %Y")
+        except Exception:
+            pass
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if float(value).is_integer():
+            return f"{int(value):,}"
+        return f"{value:,.1f}"
+
+    return str(value)
+
+
+def render_dashboard_table(table, label_column=None, max_height=560):
+    if table.empty:
+        st.info("No records match the selected filters.")
+        return
+
+    display_table = table.copy()
+    columns = display_table.columns.tolist()
+    numeric_columns = display_table.select_dtypes(include="number").columns.tolist()
+
+    header_cells = []
+    for column in columns:
+        classes = []
+        if column in numeric_columns:
+            classes.append("numeric")
+        if column == "Total":
+            classes.append("total-col")
+        class_attr = f' class="{" ".join(classes)}"' if classes else ""
+        header_cells.append(f"<th{class_attr}>{escape_text(column)}</th>")
+
+    body_rows = []
+    for _, row in display_table.iterrows():
+        first_value = str(row.iloc[0]) if len(row) else ""
+        is_total_row = first_value == "Total" or (
+            label_column in display_table.columns and str(row.get(label_column)) == "Total"
+        )
+        row_class = ' class="total-row"' if is_total_row else ""
+        cells = []
+
+        for column in columns:
+            value = row[column]
+            display_value = display_table_value(value)
+            classes = []
+
+            if column == label_column or column == columns[0]:
+                classes.append("label-cell")
+            if column in numeric_columns:
+                classes.append("numeric")
+            if column == "Total":
+                classes.append("total-col")
+            if display_value in ["[Missing]", "[Not recorded]", "None", "nan", "NaT", ""]:
+                classes.append("missing")
+
+            class_attr = f' class="{" ".join(classes)}"' if classes else ""
+            cells.append(f"<td{class_attr}>{escape_text(display_value)}</td>")
+
+        body_rows.append(f"<tr{row_class}>{''.join(cells)}</tr>")
+
+    table_html = (
+        f'<div class="dashboard-table-wrap" style="max-height: {int(max_height)}px;">'
+        + '<table class="dashboard-table">'
+        + f"<thead><tr>{''.join(header_cells)}</tr></thead>"
+        + f"<tbody>{''.join(body_rows)}</tbody>"
+        + "</table></div>"
+    )
+
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 def show_gender_table(frame, category_column, category_label, top_n=None):
@@ -1480,7 +1782,166 @@ def show_gender_table(frame, category_column, category_label, top_n=None):
     if table.empty:
         st.info("No records match the selected filters.")
         return
-    st.dataframe(style_total_table(table, category_label), use_container_width=True, hide_index=True)
+    render_dashboard_table(table, label_column=category_label)
+
+
+def age_breakdown_options(frame, category_column):
+    if frame.empty or category_column not in frame.columns:
+        return []
+
+    return (
+        frame[category_column]
+        .dropna()
+        .astype(str)
+        .value_counts()
+        .index
+        .tolist()
+    )
+
+
+def age_gender_breakdown_table(frame, category_column, selected_categories, category_label):
+    if (
+        frame.empty
+        or category_column not in frame.columns
+        or "age_group" not in frame.columns
+        or "information_seeker_gender" not in frame.columns
+    ):
+        return pd.DataFrame()
+
+    if not selected_categories:
+        return pd.DataFrame()
+
+    selected = frame.copy()
+    selected[category_column] = selected[category_column].map(clean_text).fillna("[Missing]")
+    selected["age_group"] = selected["age_group"].map(clean_text).fillna("[Missing]")
+    selected["information_seeker_gender"] = (
+        selected["information_seeker_gender"].map(clean_text).fillna("[Missing]")
+    )
+    selected = selected[selected[category_column].astype(str).isin(selected_categories)]
+
+    if selected.empty:
+        return pd.DataFrame()
+
+    grouped = (
+        selected.groupby(["age_group", "information_seeker_gender"], dropna=False)
+        .size()
+        .reset_index(name="Records")
+    )
+
+    table = grouped.pivot_table(
+        index="age_group",
+        columns="information_seeker_gender",
+        values="Records",
+        aggfunc="sum",
+        fill_value=0,
+    ).reset_index()
+
+    gender_columns = [gender for gender in GENDER_ORDER if gender in table.columns]
+    other_gender_columns = [
+        col
+        for col in table.columns
+        if col not in ["age_group"] + gender_columns
+    ]
+    numeric_columns = gender_columns + other_gender_columns
+    table["Total"] = table[numeric_columns].sum(axis=1)
+
+    age_order_map = {age: index for index, age in enumerate(AGE_GROUP_ORDER)}
+    table["_sort_order"] = table["age_group"].map(age_order_map).fillna(999)
+    table = table.sort_values(["_sort_order", "age_group"]).drop(columns="_sort_order")
+
+    table = table.rename(columns={"age_group": "Age group"})
+    ordered_columns = ["Age group"] + numeric_columns + ["Total"]
+    table = table[ordered_columns]
+
+    total_row = {"Age group": "Total"}
+    for col in numeric_columns + ["Total"]:
+        total_row[col] = table[col].sum()
+
+    return pd.concat([table, pd.DataFrame([total_row])], ignore_index=True)
+
+
+def draw_age_gender_breakdown_bar(
+    frame,
+    category_column,
+    selected_categories,
+    category_label,
+    height=340,
+):
+    table = age_gender_breakdown_table(
+        frame,
+        category_column,
+        selected_categories,
+        category_label,
+    )
+
+    if table.empty:
+        st.info("No age breakdown is available for the selected option.")
+        return
+
+    chart_data = table[table["Age group"] != "Total"].copy()
+
+    if chart_data.empty:
+        st.info("No age breakdown is available for the selected option.")
+        return
+
+    gender_columns = [
+        col
+        for col in chart_data.columns
+        if col not in ["Age group", "Total"]
+    ]
+
+    long_chart = chart_data.melt(
+        id_vars=["Age group"],
+        value_vars=gender_columns,
+        var_name="Gender",
+        value_name="Records",
+    )
+    long_chart = long_chart[long_chart["Records"] > 0]
+
+    if long_chart.empty:
+        st.info("No age breakdown is available for the selected option.")
+        return
+
+    row_order = chart_data["Age group"].tolist()
+    chart_height = max(height, min(850, 30 * len(row_order) + 90))
+
+    chart = (
+        alt.Chart(long_chart)
+        .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
+        .encode(
+            y=alt.Y(
+                "Age group:N",
+                sort=row_order,
+                title=None,
+                axis=alt.Axis(labelFontSize=11),
+            ),
+            x=alt.X("Records:Q", title="Records", stack="zero"),
+            color=gender_color("Gender:N"),
+            tooltip=[
+                alt.Tooltip("Age group:N", title="Age group"),
+                alt.Tooltip("Gender:N", title="Gender"),
+                alt.Tooltip("Records:Q", title="Records", format=","),
+            ],
+        )
+        .properties(height=chart_height)
+    )
+
+    st.altair_chart(polish_chart(chart), use_container_width=True)
+
+
+def show_age_gender_breakdown_table(frame, category_column, selected_categories, category_label):
+    table = age_gender_breakdown_table(
+        frame,
+        category_column,
+        selected_categories,
+        category_label,
+    )
+
+    if table.empty:
+        st.info("No age breakdown is available for the selected option.")
+        return
+
+    render_dashboard_table(table, label_column="Age group")
 
 
 def gender_wide_chart_data(frame, category_column, top_n=None, ascending=False):
@@ -1512,7 +1973,7 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
     chart_height = max(height, min(900, 36 * len(category_order) + 80))
     chart = (
         alt.Chart(long_chart)
-        .mark_bar(cornerRadiusEnd=2, stroke="#FFFFFF", strokeWidth=0.5)
+        .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
         .encode(
             y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=700, labelFontSize=11, labelPadding=6)),
             x=alt.X("Records:Q", title="Records", stack="zero"),
@@ -1538,7 +1999,7 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
     long_chart = chart_data.melt(id_vars=[category_column, "axis_label"], value_vars=gender_columns, var_name="Gender", value_name="Records")
     chart = (
         alt.Chart(long_chart)
-        .mark_bar(cornerRadiusEnd=2, stroke="#FFFFFF", strokeWidth=0.5)
+        .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
         .encode(
             x=alt.X("axis_label:N", sort=axis_order, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=150, labelFontSize=10)),
             y=alt.Y("Records:Q", title="Records", stack="zero"),
@@ -1561,12 +2022,31 @@ def draw_total_donut(frame, category_column, category_label, height=320, min_lab
     summary[category_column] = summary[category_column].fillna("[Missing]").astype(str)
     summary["Share"] = summary["Records"] / summary["Records"].sum()
     summary["Share label"] = summary["Share"].map(lambda value: f"{value:.1%}" if value >= min_label_share else "")
+
+    category_values = summary[category_column].astype(str).tolist()
+
+    if category_column == "information_seeker_gender":
+        available_genders = [gender for gender in GENDER_ORDER if gender in category_values]
+        color_encoding = gender_color(f"{category_column}:N", available=available_genders)
+    elif all(value in STATUS_COLORS for value in category_values):
+        color_encoding = alt.Color(
+            f"{category_column}:N",
+            title=category_label,
+            scale=alt.Scale(
+                domain=category_values,
+                range=[STATUS_COLORS[value] for value in category_values],
+            ),
+            legend=alt.Legend(symbolType="circle", orient="bottom"),
+        )
+    else:
+        color_encoding = category_color(f"{category_column}:N", title=category_label)
+
     donut = (
         alt.Chart(summary)
-        .mark_arc(innerRadius=72, outerRadius=120, stroke="#FFFFFF", strokeWidth=2)
+        .mark_arc(innerRadius=76, outerRadius=122, cornerRadius=3, stroke="#FFFFFF", strokeWidth=2)
         .encode(
             theta=alt.Theta("Records:Q", stack=True),
-            color=alt.Color(f"{category_column}:N", title=category_label, scale=alt.Scale(range=["#2F7D69", "#D9A441", "#2563EB", "#DB2777", "#7C3AED", "#64748B"])),
+            color=color_encoding,
             tooltip=[alt.Tooltip(f"{category_column}:N", title=category_label), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Share:Q", title="Share", format=".1%")],
         )
     )
@@ -1616,7 +2096,7 @@ def draw_request_type_bar(frame, height=190):
         x=alt.X("Records:Q", title="Records"),
     )
 
-    bars = base.mark_bar(cornerRadiusEnd=4).encode(
+    bars = base.mark_bar(cornerRadiusEnd=6, opacity=0.94, stroke="#FFFFFF", strokeWidth=0.7).encode(
         color=alt.Color(
             "Request type:N",
             legend=None,
@@ -1680,7 +2160,11 @@ def draw_monthly_gender_column_bar(frame, height=340):
 
     line = (
         alt.Chart(monthly)
-        .mark_line(point=True, strokeWidth=3)
+        .mark_line(
+            point=alt.OverlayMarkDef(filled=True, size=70, stroke="#FFFFFF", strokeWidth=1),
+            strokeWidth=3.2,
+            interpolate="monotone",
+        )
         .encode(
             x=alt.X("year_month:N", sort=month_order, title=None, axis=alt.Axis(labelAngle=-30, labelFontSize=11)),
             y=alt.Y("Records:Q", title="Records"),
@@ -1704,7 +2188,7 @@ def draw_count_bar(frame, category_column, category_label, height=360):
     chart_data["axis_label"] = chart_data[category_label].map(lambda value: short_axis_label(value, max_chars=24))
     axis_order = chart_data["axis_label"].tolist()
     base = alt.Chart(chart_data).encode(x=alt.X("axis_label:N", sort=axis_order, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=160, labelFontSize=11)), y=alt.Y("Records:Q", title="Records"))
-    bars = base.mark_bar(cornerRadiusEnd=3, color="#2F7D69").encode(tooltip=[alt.Tooltip(f"{category_label}:N", title=category_label), alt.Tooltip("Records:Q", title="Records", format=",")])
+    bars = base.mark_bar(cornerRadiusEnd=6, color="#2F7D69", opacity=0.94, stroke="#FFFFFF", strokeWidth=0.7).encode(tooltip=[alt.Tooltip(f"{category_label}:N", title=category_label), alt.Tooltip("Records:Q", title="Records", format=",")])
     labels = base.mark_text(dy=-6, fontSize=11, fontWeight=700, color="#1E293B").encode(text=alt.Text("Records:Q", format=","))
     st.altair_chart(polish_chart((bars + labels).properties(height=height)), use_container_width=True)
 
@@ -1744,6 +2228,21 @@ def filter_label(values, max_items=3):
 
 def selection_pill(label, values):
     return '<div class="app-pill app-pill-filter">' f'<span class="pill-key">{escape_text(label)}</span>' f'<span class="pill-val">{escape_text(filter_label(values))}</span>' "</div>"
+
+
+def filter_section_badge(number, title, detail, tone):
+    st.markdown(
+        f"""
+        <div class="filter-section-badge filter-section-badge-{escape_text(tone)}">
+            <div class="filter-section-number">{escape_text(number)}</div>
+            <div class="filter-section-copy">
+                <div class="filter-section-title">{escape_text(title)}</div>
+                <div class="filter-section-detail">{escape_text(detail)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def section_header(title, note=None):
@@ -2041,18 +2540,51 @@ if "to_date_filter" not in st.session_state:
     st.session_state["to_date_filter"] = max_date
 
 with st.sidebar:
-    st.header("Filters")
-    if st.button("Reset all", use_container_width=True, key="sidebar_reset_all"):
-        reset_filters(default_from_date, max_date)
-        st.rerun()
+    st.header("Dashboard Controls")
+
+    st.markdown(
+        """
+        <div class="sidebar-filter-guide">
+            <div class="sidebar-filter-guide-title">Control the dashboard view</div>
+            <div class="sidebar-filter-guide-body">
+                Start with the date range, then choose camp location before selecting helpdesk location.
+                Other filters update based on the selections above them.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     action_col1, action_col2 = st.columns(2)
     with action_col1:
-        if st.button("↻ Refresh", use_container_width=True, help="Reload latest data from Excel"):
+        if st.button("Reload data", use_container_width=True, help="Clear cache and reload the latest Excel data"):
             st.cache_data.clear()
             st.rerun()
     with action_col2:
-        st.button("Clear filters", use_container_width=True, on_click=reset_filters, args=(default_from_date, max_date))
+        st.button("Reset filters", use_container_width=True, on_click=reset_filters, args=(default_from_date, max_date))
 
+    filter_section_badge(
+        "01",
+        "Display",
+        "Choose what support panels appear above the dashboard.",
+        "slate",
+    )
+    with st.expander("Display options", expanded=False):
+        show_current_selection_summary = st.checkbox(
+            "Show current selection summary",
+            value=True,
+            key="show_current_selection_summary",
+            help="Show or hide the record count, date range, update time, and selected filter chips above the KPI cards.",
+        )
+
+    st.markdown('<div class="filter-divider"></div>', unsafe_allow_html=True)
+
+    filter_section_badge(
+        "02",
+        "Date range",
+        "Set the reporting period before applying other filters.",
+        "gold",
+    )
     with st.expander("Date range", expanded=True):
         date_cols = st.columns(2)
         with date_cols[0]:
@@ -2078,34 +2610,114 @@ with st.sidebar:
     selected_age_groups = []
     selected_request_categories = []
 
+    filter_section_badge(
+        "03",
+        "Location",
+        "Select camp first, then unlock helpdesk locations.",
+        "green",
+    )
     with st.expander("Location", expanded=True):
         camp_options = [v for v, _ in filter_options_with_counts(date_filtered_records["camp_location"])]
-        st.markdown("**Camp location**")
+        st.markdown('<div class="filter-label">Camp location</div>', unsafe_allow_html=True)
         selected_camp_locations = multi_choice_selector("Camp", camp_options, key="camp_location_filter", help_text="Select one or more camps")
-        camp_filtered_records = date_filtered_records[date_filtered_records["camp_location"].astype(str).isin(selected_camp_locations)].copy() if selected_camp_locations else date_filtered_records.copy()
-        helpdesk_options = [v for v, _ in filter_options_with_counts(camp_filtered_records["helpdesk_location"])]
-        st.markdown("**Helpdesk location**")
-        selected_helpdesk_locations = multi_choice_selector("Helpdesk location", helpdesk_options, key="helpdesk_location_filter", help_text="Select helpdesk locations")
+
+        if selected_camp_locations:
+            camp_filtered_records = date_filtered_records[
+                date_filtered_records["camp_location"].astype(str).isin(selected_camp_locations)
+            ].copy()
+        else:
+            camp_filtered_records = date_filtered_records.copy()
+            st.session_state["helpdesk_location_filter"] = []
+
+        st.markdown('<div class="filter-label">Helpdesk location</div>', unsafe_allow_html=True)
+        if selected_camp_locations:
+            helpdesk_options = [v for v, _ in filter_options_with_counts(camp_filtered_records["helpdesk_location"])]
+            selected_helpdesk_locations = multi_choice_selector(
+                "Helpdesk location",
+                helpdesk_options,
+                key="helpdesk_location_filter",
+                help_text="Select helpdesk locations after choosing camp location",
+            )
+        else:
+            selected_helpdesk_locations = []
+            st.markdown(
+                '<div class="filter-step-note">Select a camp location first to unlock helpdesk locations.</div>',
+                unsafe_allow_html=True,
+            )
 
     helpdesk_filtered_records = camp_filtered_records[camp_filtered_records["helpdesk_location"].astype(str).isin(selected_helpdesk_locations)].copy() if selected_helpdesk_locations else camp_filtered_records.copy()
 
+    filter_section_badge(
+        "04",
+        "Demographics",
+        "Narrow the dashboard by seeker type, gender, and age.",
+        "blue",
+    )
     with st.expander("Demographics", expanded=True):
         type_options = [v for v, _ in filter_options_with_counts(helpdesk_filtered_records["information_seeker_type"])]
+        st.markdown('<div class="filter-label">Information seeker type</div>', unsafe_allow_html=True)
         selected_information_seeker_types = multi_choice_selector("Information seeker type", type_options, key="information_seeker_type_filter")
         seeker_filtered_records = helpdesk_filtered_records[helpdesk_filtered_records["information_seeker_type"].astype(str).isin(selected_information_seeker_types)].copy() if selected_information_seeker_types else helpdesk_filtered_records.copy()
 
         gender_options = [v for v, _ in filter_options_with_counts(seeker_filtered_records["information_seeker_gender"], ordered_values=GENDER_ORDER)]
+        st.markdown('<div class="filter-label">Gender</div>', unsafe_allow_html=True)
         selected_genders = multi_choice_selector("Gender", gender_options, key="information_seeker_gender_filter")
         gender_filtered_records = seeker_filtered_records[seeker_filtered_records["information_seeker_gender"].astype(str).isin(selected_genders)].copy() if selected_genders else seeker_filtered_records.copy()
 
         age_options = [v for v, _ in filter_options_with_counts(gender_filtered_records["age_group"], ordered_values=AGE_GROUP_ORDER)]
+        st.markdown('<div class="filter-label">Age group</div>', unsafe_allow_html=True)
         selected_age_groups = multi_choice_selector("Age group", age_options, key="age_group_filter")
 
     age_filtered_records = gender_filtered_records[gender_filtered_records["age_group"].astype(str).isin(selected_age_groups)].copy() if selected_age_groups else gender_filtered_records.copy()
 
+    filter_section_badge(
+        "05",
+        "Request",
+        "Filter protection concerns and information requests.",
+        "violet",
+    )
     with st.expander("Request type", expanded=True):
         request_options = [v for v, _ in filter_options_with_counts(age_filtered_records["request_category"])]
+        st.markdown('<div class="filter-label">Request category</div>', unsafe_allow_html=True)
         selected_request_categories = multi_choice_selector("Request category", request_options, key="request_category_filter")
+
+    selected_filter_groups = [
+        selected_camp_locations,
+        selected_helpdesk_locations,
+        selected_information_seeker_types,
+        selected_genders,
+        selected_age_groups,
+        selected_request_categories,
+    ]
+    active_filter_count = sum(1 for selected in selected_filter_groups if selected)
+    if from_date != min_date or to_date != max_date:
+        active_filter_count += 1
+
+    sidebar_preview_records = (
+        age_filtered_records[
+            age_filtered_records["request_category"].astype(str).isin(selected_request_categories)
+        ].copy()
+        if selected_request_categories
+        else age_filtered_records.copy()
+    )
+    filter_status_class = "filter-status active" if active_filter_count else "filter-status"
+    filter_status_text = (
+        f"{active_filter_count} filter group{'s' if active_filter_count != 1 else ''} active"
+        if active_filter_count
+        else "No filters active"
+    )
+    st.markdown(
+        f"""
+        <div class="filter-status-panel">
+            <div class="{filter_status_class}">
+                <span class="filter-icon">Status</span>
+                <span>{escape_text(filter_status_text)}</span>
+            </div>
+            <div class="filter-status-hint">Estimated records after filters: {format_number(len(sidebar_preview_records))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 filters = {
     "start_date": start_date,
@@ -2158,19 +2770,21 @@ selection_pills_html = "".join([
     selection_pill("Gender", selected_genders),
     selection_pill("Age", selected_age_groups),
 ])
-st.markdown(
-    f"""
-    <div class="app-infobar">
-        <div class="app-infobar-row">
-            <div class="app-pill">&#128202; {format_number(total_records)} of {format_number(all_records)} records</div>
-            <div class="app-pill">&#128197; {escape_text(from_date.strftime('%d %b %Y'))} &ndash; {escape_text(to_date.strftime('%d %b %Y'))}</div>
-            <div class="app-pill app-pill-muted">&#128260; Updated {escape_text(last_updated)}</div>
-        </div>
-        <div class="app-infobar-row"><span class="app-infobar-tag">&#128269; Current selection</span>{selection_pills_html}</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+if st.session_state.get("show_current_selection_summary", True):
+    with st.expander("Current selection summary", expanded=True):
+        st.markdown(
+            f"""
+            <div class="app-infobar">
+                <div class="app-infobar-row">
+                    <div class="app-pill">&#128202; {format_number(total_records)} of {format_number(all_records)} records</div>
+                    <div class="app-pill">&#128197; {escape_text(from_date.strftime('%d %b %Y'))} &ndash; {escape_text(to_date.strftime('%d %b %Y'))}</div>
+                    <div class="app-pill app-pill-muted">&#128260; Updated {escape_text(last_updated)}</div>
+                </div>
+                <div class="app-infobar-row"><span class="app-infobar-tag">&#128269; Current selection</span>{selection_pills_html}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 kpi_group_caption("Volume, staffing & request mix — request types are mutually exclusive")
 mix_cols = st.columns(4)
@@ -2206,7 +2820,7 @@ show_insight_card(insight_cols[3], "Most follow-up activity", top_followup_site,
 
 st.divider()
 section_header("Explore by Section", "Select a section below to dive into the detailed analysis.")
-selected_tab = st.radio("Dashboard section", ["Overview", "Disability", "Concerns", "Information", "Referrals", "Map", "CPV Work", "DQA", "Records"], horizontal=True, label_visibility="collapsed")
+selected_tab = st.radio("Dashboard section", ["Overview", "CPV Work", "Disability", "Concerns", "Information", "Referrals", "Map", "DQA", "Records"], horizontal=True, label_visibility="collapsed")
 
 # -----------------------------------------------------------------------------
 # Overview tab
@@ -2405,6 +3019,36 @@ if selected_tab == "Concerns":
     draw_gender_bar(filtered_protection, "protection_concern", top_n=concern_top_n, height=640, ascending=concern_rank == "Lowest values")
     st.caption("Full table (all categories, unaffected by chart slicing)")
     show_gender_table(filtered_protection, "protection_concern", "Protection concern", top_n=None)
+    st.markdown("#### Protection Concern by Age Group")
+    st.caption("Select one or more protection concerns to view the age group and gender breakdown.")
+    concern_age_options = age_breakdown_options(filtered_protection, "protection_concern")
+
+    if not concern_age_options:
+        st.info("No protection concern records match the selected filters.")
+    else:
+        selected_concerns_for_age = st.multiselect(
+            "Protection concerns",
+            concern_age_options,
+            default=concern_age_options[: min(3, len(concern_age_options))],
+            key="selected_concerns_for_age",
+        )
+
+        if not selected_concerns_for_age:
+            st.info("Select at least one protection concern to view the age and gender breakdown.")
+        else:
+            draw_age_gender_breakdown_bar(
+                filtered_protection,
+                "protection_concern",
+                selected_concerns_for_age,
+                "Protection concern",
+                height=320,
+            )
+            show_age_gender_breakdown_table(
+                filtered_protection,
+                "protection_concern",
+                selected_concerns_for_age,
+                "Protection concern",
+            )
 
 if selected_tab == "Information":
     st.subheader("Top General Information Needs by Gender")
@@ -2429,6 +3073,36 @@ if selected_tab == "Referrals":
     draw_gender_bar(filtered_referrals, "referral_partner", top_n=referral_top_n, height=560, ascending=referral_rank == "Lowest values")
     st.caption("Full table (all categories, unaffected by chart slicing)")
     show_gender_table(filtered_referrals, "referral_partner", "Referral partner", top_n=None)
+    st.markdown("#### Referral Partner by Age Group")
+    st.caption("Select one or more referral partners to view the age group and gender breakdown.")
+    referral_age_options = age_breakdown_options(filtered_referrals, "referral_partner")
+
+    if not referral_age_options:
+        st.info("No referral partner records match the selected filters.")
+    else:
+        selected_referral_partners_for_age = st.multiselect(
+            "Referral partners",
+            referral_age_options,
+            default=referral_age_options[: min(3, len(referral_age_options))],
+            key="selected_referral_partners_for_age",
+        )
+
+        if not selected_referral_partners_for_age:
+            st.info("Select at least one referral partner to view the age and gender breakdown.")
+        else:
+            draw_age_gender_breakdown_bar(
+                filtered_referrals,
+                "referral_partner",
+                selected_referral_partners_for_age,
+                "Referral partner",
+                height=320,
+            )
+            show_age_gender_breakdown_table(
+                filtered_referrals,
+                "referral_partner",
+                selected_referral_partners_for_age,
+                "Referral partner",
+            )
 
 if selected_tab == "Map":
     st.subheader("Helpdesk Locations Map")
@@ -2523,7 +3197,13 @@ if selected_tab == "CPV Work":
 
         cpv_chart = (
             alt.Chart(cpv_chart_data)
-            .mark_bar(cornerRadiusEnd=3, color="#2F7D69")
+            .mark_bar(
+                cornerRadiusEnd=6,
+                color="#2F7D69",
+                opacity=0.94,
+                stroke="#FFFFFF",
+                strokeWidth=0.7,
+            )
             .encode(
                 y=alt.Y(
                     "CPV:N",
