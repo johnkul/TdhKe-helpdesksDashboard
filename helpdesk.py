@@ -1382,6 +1382,8 @@ def reset_filters(default_from_date, max_date):
     for key in FILTER_KEYS:
         st.session_state[key] = []
     st.session_state["records_search"] = ""
+    st.session_state["helpdesk_section_category"] = "Summary"
+    st.session_state["helpdesk_section"] = "Overview"
 
 
 def apply_filters(frame, filters):
@@ -1410,7 +1412,7 @@ def gender_color(field, available=None):
         title="Gender",
         scale=alt.Scale(domain=available, range=[GENDER_COLORS[g] for g in available]),
         sort=available,
-        legend=alt.Legend(symbolType="circle", orient="bottom"),
+        legend=alt.Legend(symbolType="circle", orient="bottom", columns=3, labelLimit=120),
     )
 
 
@@ -1427,7 +1429,7 @@ def category_color(field, title=None, domain=None, legend=True):
         )
 
     if legend:
-        color_kwargs["legend"] = alt.Legend(symbolType="circle", orient="bottom")
+        color_kwargs["legend"] = alt.Legend(symbolType="circle", orient="bottom", columns=3, labelLimit=120)
     else:
         color_kwargs["legend"] = None
 
@@ -1460,7 +1462,6 @@ def polish_chart(chart):
             orient="bottom",
             symbolType="circle",
             symbolSize=125,
-            padding=10,
         )
         .configure_header(
             labelColor="#12312F",
@@ -2034,6 +2035,7 @@ def draw_total_donut(frame, category_column, category_label, height=320, min_lab
     summary[category_column] = summary[category_column].fillna("[Missing]").astype(str)
     summary["Share"] = summary["Records"] / summary["Records"].sum()
     summary["Share label"] = summary["Share"].map(lambda value: f"{value:.1%}" if value >= min_label_share else "")
+    summary["Slice order"] = range(len(summary))
 
     category_values = summary[category_column].astype(str).tolist()
 
@@ -2048,22 +2050,58 @@ def draw_total_donut(frame, category_column, category_label, height=320, min_lab
                 domain=category_values,
                 range=[STATUS_COLORS[value] for value in category_values],
             ),
-            legend=alt.Legend(symbolType="circle", orient="bottom"),
+            legend=alt.Legend(symbolType="circle", orient="bottom", columns=3, labelLimit=120),
         )
     else:
         color_encoding = category_color(f"{category_column}:N", title=category_label)
 
+    # Keep the complete donut and its labels inside narrow Streamlit columns.
+    # The previous fixed radii (122px ring, 145px labels) overflowed the
+    # two-column disability cards. These values scale with the available chart
+    # height and place labels safely inside the ring.
+    chart_height = max(240, int(height))
+    outer_radius = max(72, min(106, int((chart_height - 90) / 2)))
+    inner_radius = int(outer_radius * 0.60)
+    label_radius = int((inner_radius + outer_radius) / 2)
+
     donut = (
         alt.Chart(summary)
-        .mark_arc(innerRadius=76, outerRadius=122, cornerRadius=3, stroke="#FFFFFF", strokeWidth=2)
+        .mark_arc(innerRadius=inner_radius, outerRadius=outer_radius, cornerRadius=3, stroke="#FFFFFF", strokeWidth=2)
         .encode(
             theta=alt.Theta("Records:Q", stack=True),
             color=color_encoding,
+            order=alt.Order("Slice order:Q", sort="ascending"),
             tooltip=[alt.Tooltip(f"{category_column}:N", title=category_label), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Share:Q", title="Share", format=".1%")],
         )
     )
-    labels = alt.Chart(summary[summary["Share label"].ne("")]).mark_text(radius=145, fontSize=12, fontWeight=700, color="#334155").encode(theta=alt.Theta("Records:Q", stack=True), text=alt.Text("Share label:N"))
-    st.altair_chart(polish_chart((donut + labels).properties(height=height)), use_container_width=True)
+    labels = (
+        # Retain every slice so the text layer uses exactly the same angular
+        # scale as the arcs. Small slices carry a blank label rather than being
+        # removed, which prevents remaining labels from shifting segments.
+        alt.Chart(summary)
+        .mark_text(
+            radius=label_radius,
+            fontSize=11,
+            fontWeight=800,
+            color="#FFFFFF",
+            stroke="#334155",
+            strokeWidth=1.2,
+        )
+        .encode(
+            theta=alt.Theta("Records:Q", stack=True),
+            order=alt.Order("Slice order:Q", sort="ascending"),
+            text=alt.Text("Share label:N"),
+        )
+    )
+    st.altair_chart(
+        polish_chart(
+            (donut + labels).properties(
+                height=chart_height,
+                padding={"top": 10, "right": 10, "bottom": 10, "left": 10},
+            )
+        ),
+        use_container_width=True,
+    )
 
 
 def draw_request_type_bar(frame, height=190):
@@ -2287,6 +2325,69 @@ def section_header(title, note=None):
     st.markdown(f"""<div class="section-header"><span class="section-accent"></span><span class="section-title">{escape_text(title)}</span></div>""", unsafe_allow_html=True)
     if note:
         st.markdown(f'<div class="section-note">{escape_text(note)}</div>', unsafe_allow_html=True)
+
+
+HELPDESK_SECTION_META = {
+    "Overview": ("🏠", "Overview", "Review overall volume, request mix, demographics and location coverage."),
+    "CPV Work": ("👥", "Staff / CPV Performance", "Compare staff workload, requests, referrals, follow-up and operating coverage."),
+    "Disability": ("♿", "Disability Inclusion", "Review disability prevalence, impairment types, severity and exclusion risks."),
+    "Concerns": ("🛡️", "Protection Concerns", "Explore reported protection concerns, rankings and age/gender patterns."),
+    "Information": ("ℹ️", "Information Requests", "Understand the protection information requested by helpdesk users."),
+    "Referrals": ("🔁", "Referrals", "Review referral partners, destinations and demographic patterns."),
+    "Map": ("🗺️", "Service Map", "Locate mapped helpdesk records and assess geographic coverage."),
+    "DQA": ("✅", "Data Quality", "Review completeness, corrections and protected follow-up records."),
+    "Records": ("📄", "Records & Export", "Inspect filtered records and prepare privacy-safe downloads."),
+}
+HELPDESK_SECTION_GROUPS = {
+    "Summary": ["Overview"],
+    "People & Delivery": ["CPV Work", "Disability"],
+    "Service Requests": ["Concerns", "Information", "Referrals"],
+    "Operations & Data": ["Map", "DQA", "Records"],
+}
+HELPDESK_CATEGORY_LABELS = {
+    "Summary": "📊 Summary", "People & Delivery": "👥 People & Delivery",
+    "Service Requests": "🛡️ Service Requests", "Operations & Data": "✅ Operations & Data",
+}
+
+
+def helpdesk_section_navigation():
+    section_key = "helpdesk_section"
+    category_key = "helpdesk_section_category"
+    if section_key not in st.session_state or st.session_state[section_key] not in HELPDESK_SECTION_META:
+        st.session_state[section_key] = "Overview"
+    current_category = next(category for category, views in HELPDESK_SECTION_GROUPS.items() if st.session_state[section_key] in views)
+    if category_key not in st.session_state or st.session_state[category_key] not in HELPDESK_SECTION_GROUPS:
+        st.session_state[category_key] = current_category
+    category = st.selectbox(
+        "**Analysis area**", list(HELPDESK_SECTION_GROUPS), key=category_key,
+        format_func=lambda value: HELPDESK_CATEGORY_LABELS[value],
+        help="Choose a broad analysis area, then select a view.",
+    )
+    views = HELPDESK_SECTION_GROUPS[category]
+    if st.session_state[section_key] not in views:
+        st.session_state[section_key] = views[0]
+    return st.radio(
+        "View", views, key=section_key,
+        format_func=lambda value: f"{HELPDESK_SECTION_META[value][0]} {HELPDESK_SECTION_META[value][1]}",
+        help="Active filters remain in place when you change views.",
+    )
+
+
+def helpdesk_section_intro(section, filtered_count):
+    icon, label, description = HELPDESK_SECTION_META[section]
+    category = next(category for category, views in HELPDESK_SECTION_GROUPS.items() if section in views)
+    st.caption(f"Dashboard › {category} › {label} · {filtered_count:,} records in view")
+    st.markdown(
+        f'<div class="section-intro-card"><div class="section-intro-icon">{icon}</div>'
+        f'<div><div class="section-intro-title">{escape_text(label)}</div>'
+        f'<div class="section-intro-desc">{escape_text(description)}</div></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def helpdesk_go_to_overview():
+    st.session_state["helpdesk_section_category"] = "Summary"
+    st.session_state["helpdesk_section"] = "Overview"
 
 
 def kpi_group_caption(text):
@@ -2555,6 +2656,118 @@ def cpv_work_summary(frame):
         )
     return pd.DataFrame(rows).sort_values("Records", ascending=False) if rows else pd.DataFrame(columns=columns)
 
+def build_helpdesk_findings(section, frame, protection_frame, information_frame, referral_frame):
+    """Build auditable findings from the filtered sources used by each section."""
+    total = len(frame)
+    if total == 0:
+        return "No records match the current filters, so the section tables do not support a finding."
+
+    excluded = {"[Missing]", "[Not recorded]", "Missing / unspecified", "Needs review", "None"}
+
+    def value_counts(data, column):
+        if data.empty or column not in data.columns:
+            return pd.Series(dtype="int64")
+        values = data[column].dropna().astype(str)
+        return values[~values.isin(excluded)].value_counts()
+
+    def leading(data, column):
+        result = value_counts(data, column)
+        return (str(result.index[0]), int(result.iloc[0])) if not result.empty else ("", 0)
+
+    def gender_distribution(data=frame):
+        result = value_counts(data, "information_seeker_gender")
+        denominator = int(result.sum())
+        if not denominator:
+            return "Gender disaggregation is unavailable for the current filters."
+        details = "; ".join(f"{label}: {int(count):,} ({int(count) / denominator:.1%})" for label, count in result.items())
+        return f"Among {denominator:,} records with a usable gender response, {details}."
+
+    def positive_gender_rates(column, positive, description):
+        if column not in frame.columns:
+            return ""
+        parts = []
+        for gender in GENDER_ORDER:
+            scoped = frame[frame["information_seeker_gender"].astype(str).eq(gender) & frame[column].notna()]
+            if len(scoped) < 5:
+                continue
+            positive_count = int(scoped[column].astype(str).eq(positive).sum())
+            parts.append(f"{gender}: {positive_count:,} of {len(scoped):,} ({positive_count / len(scoped):.1%})")
+        return f"By gender, {description} was recorded for " + "; ".join(parts) + "." if parts else ""
+
+    def leaders_by_gender(data, column, unit="records"):
+        if data.empty or column not in data.columns or "information_seeker_gender" not in data.columns:
+            return ""
+        parts = []
+        for gender in GENDER_ORDER:
+            scoped = data[data["information_seeker_gender"].astype(str).eq(gender)]
+            label, count = leading(scoped, column)
+            if label:
+                parts.append(f"for {gender}, {label} is highest at {count:,} {unit}")
+        return "; ".join(parts) + "." if parts else ""
+
+    blocks = []
+    if section == "Overview":
+        location, location_n = leading(frame, "helpdesk_location")
+        request, request_n = leading(frame, "request_category")
+        age, age_n = leading(frame, "age_group")
+        coverage = f"The view contains {total:,} records"
+        if location:
+            coverage += f"; {location} is the busiest helpdesk with {location_n:,} records ({location_n / total:.1%})"
+        blocks.append(("Coverage", coverage + "."))
+        profile = f"{request} is the largest request category at {request_n:,} ({request_n / total:.1%})" if request else "No usable request category remains"
+        if age:
+            profile += f", while {age} is the largest age group at {age_n:,} ({age_n / total:.1%})"
+        blocks.append(("Request and demographic profile", profile + ". " + gender_distribution()))
+    elif section == "CPV Work":
+        summary = cpv_work_summary(frame)
+        if not summary.empty:
+            top = summary.iloc[0]
+            blocks.append(("Workload", f"{len(summary):,} CPVs are represented; {top['CPV']} has the largest workload with {int(top['Records']):,} records."))
+        blocks.append(("Gender reach", gender_distribution()))
+        blocks.append(("Case outcomes", " ".join(filter(None, [positive_gender_rates("follow_up_required_clean", "Yes", "follow-up required"), positive_gender_rates("referral_status", "Referred to partner agency", "a partner referral")]))))
+    elif section == "Disability":
+        disability = frame[frame["disability_status"].astype(str).eq("Has Disability")]
+        dtype, dtype_n = leading(disability, "disability_type")
+        blocks.append(("Prevalence", f"Disability is recorded in {len(disability):,} of {total:,} records ({len(disability) / total:.1%}). {positive_gender_rates('disability_status', 'Has Disability', 'a disability')}"))
+        if dtype:
+            blocks.append(("Impairment profile", f"{dtype} is the most frequently recorded disability type ({dtype_n:,} records). {leaders_by_gender(disability, 'disability_type')}"))
+    elif section == "Concerns":
+        concern, concern_n = leading(protection_frame, "protection_concern")
+        record_n = protection_frame["record_id"].nunique() if "record_id" in protection_frame.columns else 0
+        blocks.append(("Concern profile", f"The tables contain {len(protection_frame):,} concern mentions across {record_n:,} records. {concern} is highest at {concern_n:,} mentions." if concern else "No usable protection-concern mentions remain."))
+        if concern:
+            blocks.append(("Gender pattern", leaders_by_gender(protection_frame, "protection_concern", "mentions")))
+    elif section == "Information":
+        need, need_n = leading(information_frame, "general_information_need")
+        record_n = information_frame["record_id"].nunique() if "record_id" in information_frame.columns else 0
+        blocks.append(("Information profile", f"The tables contain {len(information_frame):,} information-need mentions across {record_n:,} records. {need} is highest at {need_n:,} mentions." if need else "No usable information-request mentions remain."))
+        if need:
+            blocks.append(("Gender pattern", leaders_by_gender(information_frame, "general_information_need", "mentions")))
+    elif section == "Referrals":
+        partner, partner_n = leading(referral_frame, "referral_partner")
+        referred = int(frame["referral_status"].astype(str).eq("Referred to partner agency").sum())
+        blocks.append(("Referral rate", f"{referred:,} of {total:,} records were referred to a partner agency ({referred / total:.1%}). {positive_gender_rates('referral_status', 'Referred to partner agency', 'a partner referral')}"))
+        if partner:
+            blocks.append(("Partner profile", f"{partner} is the leading recorded referral partner with {partner_n:,} mentions. {leaders_by_gender(referral_frame, 'referral_partner', 'mentions')}"))
+    elif section == "Map":
+        mapped = frame[["gps_latitude", "gps_longitude"]].notna().all(axis=1) if {"gps_latitude", "gps_longitude"}.issubset(frame.columns) else pd.Series(False, index=frame.index)
+        camp, camp_n = leading(frame[mapped], "camp_location")
+        blocks.append(("Geographic coverage", f"{int(mapped.sum()):,} of {total:,} records have usable coordinates ({mapped.mean():.1%})."))
+        if camp:
+            blocks.append(("Mapped distribution", f"{camp} contributes the largest mapped volume with {camp_n:,} records. {gender_distribution(frame[mapped])}"))
+    elif section == "DQA":
+        checks = {"interview date": frame["interview_date"].notna(), "gender": ~frame["information_seeker_gender"].astype(str).isin(excluded), "age group": ~frame["age_group"].astype(str).isin(excluded), "helpdesk location": ~frame["helpdesk_location"].astype(str).isin(excluded)}
+        ordered = sorted(((label, int(mask.sum()) / total) for label, mask in checks.items()), key=lambda item: item[1])
+        blocks.append(("Completeness", f"Headline completeness ranges from {ordered[0][1]:.1%} for {ordered[0][0]} to {ordered[-1][1]:.1%} for {ordered[-1][0]}."))
+        blocks.append(("Corrections", f"Gender/age corrections affect {int(frame['gender_age_correction_flag'].sum()):,} records, while seeker-type/age corrections affect {int(frame['type_age_correction_flag'].sum()):,} records."))
+    else:
+        blocks.append(("Records", f"The table contains {total:,} filtered, non-PII dashboard records. {gender_distribution()}"))
+        blocks.append(("Export", "The standard download excludes configured direct identifiers; protected education follow-up data remain password-gated."))
+
+    blocks = [(heading, text.strip()) for heading, text in blocks if text and text.strip()]
+    return "\n\n".join(f"**{heading}.** {text}" for heading, text in blocks) if blocks else "The filtered tables do not support a sufficiently clear descriptive finding."
+
+
 # -----------------------------------------------------------------------------
 # App
 # -----------------------------------------------------------------------------
@@ -2593,13 +2806,29 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    action_col1, action_col2 = st.columns(2)
-    with action_col1:
-        if st.button("Reload data", use_container_width=True, help="Clear cache and reload the latest Excel data"):
-            st.cache_data.clear()
+    st.button(
+        "↺ Reset view", use_container_width=True,
+        on_click=reset_filters, args=(default_from_date, max_date),
+        help="Clear filters and return to the Overview section.",
+    )
+
+    st.markdown('<div class="sidebar-nav-title">Explore dashboard</div>', unsafe_allow_html=True)
+    selected_tab = helpdesk_section_navigation()
+    with st.expander("How to use this dashboard", expanded=False):
+        st.markdown(
+            "1. Choose an **analysis area** and **view**.\n"
+            "2. Apply filters below; they remain active across views.\n"
+            "3. Open **Findings from the current tables** for interpretation.\n\n"
+            "**CPV:** Community-based protection volunteer  \n"
+            "**Mention:** A selected response; one record may contain several mentions"
+        )
+    with st.expander("Data & cache status", expanded=False):
+        st.caption(f"Source: {DATA_FILE_PATH.name}")
+        st.caption(f"Source records: {len(records):,}")
+        st.caption(f"Last updated: {file_signature[3] if file_signature[3] else 'Unknown'}")
+        if st.button("Refresh data cache", key="admin_refresh_helpdesk_cache", use_container_width=True):
+            load_data.clear()
             st.rerun()
-    with action_col2:
-        st.button("Reset filters", use_container_width=True, on_click=reset_filters, args=(default_from_date, max_date))
 
     filter_section_badge(
         "01",
@@ -2693,7 +2922,7 @@ with st.sidebar:
         "Narrow the dashboard by seeker type, gender, and age.",
         "blue",
     )
-    with st.expander("Demographics", expanded=True):
+    with st.expander("Demographics", expanded=False):
         type_options = [v for v, _ in filter_options_with_counts(helpdesk_filtered_records["information_seeker_type"])]
         st.markdown('<div class="filter-label">Information seeker type</div>', unsafe_allow_html=True)
         selected_information_seeker_types = multi_choice_selector("Information seeker type", type_options, key="information_seeker_type_filter")
@@ -2719,7 +2948,7 @@ with st.sidebar:
         "Filter protection concerns and information requests.",
         "violet",
     )
-    with st.expander("Request type", expanded=True):
+    with st.expander("Request type", expanded=False):
         request_options = [v for v, _ in filter_options_with_counts(age_filtered_records["request_category"])]
         st.markdown('<div class="filter-label">Request category</div>', unsafe_allow_html=True)
         selected_request_categories = multi_choice_selector("Request category", request_options, key="request_category_filter")
@@ -2815,7 +3044,7 @@ selection_pills_html = "".join([
     selection_pill("Age", selected_age_groups),
 ])
 if st.session_state.get("show_current_selection_summary", True):
-    with st.expander("Current selection summary", expanded=True):
+    with st.expander("Current selection summary", expanded=False):
         st.markdown(
             f"""
             <div class="app-infobar">
@@ -2863,8 +3092,15 @@ show_insight_card(insight_cols[2], "Most common impairment", top_disability, ins
 show_insight_card(insight_cols[3], "Most follow-up activity", top_followup_site, insight_detail(top_followup_site_count, len(follow_up_records), unit="follow-ups", denom_label="follow-ups"), icon="🔄", count=top_followup_site_count)
 
 st.divider()
-section_header("Explore by Section", "Select a section below to dive into the detailed analysis.")
-selected_tab = st.radio("Dashboard section", ["Overview", "CPV Work", "Disability", "Concerns", "Information", "Referrals", "Map", "DQA", "Records"], horizontal=True, label_visibility="collapsed")
+helpdesk_section_intro(selected_tab, total_records)
+if selected_tab != "Overview":
+    st.button("← Back to Overview", key="helpdesk_back_to_overview", on_click=helpdesk_go_to_overview)
+section_findings = build_helpdesk_findings(
+    selected_tab, filtered_records, filtered_protection, filtered_information, filtered_referrals
+)
+with st.expander("Findings from the current tables", expanded=(selected_tab == "Overview")):
+    st.caption("Automatically generated, filter-aware descriptive findings. They summarize observed patterns and do not establish causes.")
+    st.markdown(section_findings)
 
 # -----------------------------------------------------------------------------
 # Overview tab
@@ -3392,7 +3628,8 @@ if selected_tab == "Records":
     preview_records = searched_records[selected_columns].head(RECORD_PREVIEW_LIMIT)
     st.caption(f"Showing {format_number(len(preview_records))} preview records from {format_number(len(searched_records))} matching records. The download still includes all matching records.")
     st.dataframe(style_records_table(preview_records), use_container_width=True, hide_index=True)
-    st.download_button("Download filtered records", data=searched_records.to_csv(index=False).encode("utf-8"), file_name="filtered_helpdesk_records.csv", mime="text/csv", use_container_width=True)
+    if st.checkbox("Prepare filtered CSV download", value=False, help="CSV bytes are generated only when requested to keep ordinary page opening fast."):
+        st.download_button("Download filtered records", data=searched_records.to_csv(index=False).encode("utf-8"), file_name="filtered_helpdesk_records.csv", mime="text/csv", use_container_width=True)
 
     with st.expander("Protected DQA table: education concerns with PII", expanded=False):
         st.markdown(
