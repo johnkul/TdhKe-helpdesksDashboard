@@ -1881,12 +1881,21 @@ def apply_filters(frame, filters):
 
 def gender_color(field, available=None):
     available = [gender for gender in (available or GENDER_ORDER) if gender in GENDER_COLORS]
+    legend_columns = max(1, min(5, len(available)))
     return alt.Color(
         field,
         title="Gender",
         scale=alt.Scale(domain=available, range=[GENDER_COLORS[g] for g in available]),
         sort=available,
-        legend=alt.Legend(symbolType="circle", orient="bottom", columns=3, labelLimit=120),
+        legend=alt.Legend(
+            symbolType="circle",
+            orient="bottom",
+            direction="horizontal",
+            columns=legend_columns,
+            labelLimit=140,
+            columnPadding=18,
+            rowPadding=4,
+        ),
     )
 
 
@@ -1926,7 +1935,14 @@ def polish_chart(chart):
             titlePadding=10,
         )
         .configure_axisY(grid=True)
-        .configure_axisX(grid=False)
+        .configure_axisX(
+            grid=False,
+            labelBound=True,
+            labelFlush=True,
+            labelFlushOffset=4,
+            labelOverlap="parity",
+            labelLimit=160,
+        )
         .configure_legend(
             labelColor="#1E293B",
             titleColor="#1E293B",
@@ -1965,6 +1981,13 @@ def display_category_value(value):
     if normalized and "chronic illness" in normalized:
         return "Chronic Illnesses"
     return value
+
+
+def chart_headroom(values, fraction=0.18):
+    """Return a safe quantitative upper bound for labels drawn beyond marks."""
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce").fillna(0)
+    maximum = float(numeric.max()) if not numeric.empty else 0.0
+    return max(1.0, maximum * (1.0 + fraction))
 
 
 def gender_pivot_table(frame, category_column, category_label, top_n=None):
@@ -2475,6 +2498,7 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
         if col != category_column and pd.to_numeric(chart_data[col], errors="coerce").fillna(0).sum() > 0
     ]
     totals = chart_data.assign(_total=chart_data[gender_columns].sum(axis=1))
+    x_upper = chart_headroom(totals["_total"])
     category_order = totals.sort_values("_total", ascending=ascending)[category_column].astype(str).tolist()
     long_chart = chart_data.melt(id_vars=[category_column], value_vars=gender_columns, var_name="Gender", value_name="Records")
     long_chart["Category total"] = long_chart.groupby(category_column)["Records"].transform("sum")
@@ -2484,8 +2508,8 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
         alt.Chart(long_chart)
         .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
         .encode(
-            y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=700, labelFontSize=11, labelPadding=6)),
-            x=alt.X("Records:Q", title="Records", stack="zero"),
+            y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=420, labelFontSize=11, labelPadding=6)),
+            x=alt.X("Records:Q", title="Records", stack="zero", scale=alt.Scale(domain=[0, x_upper], nice=False)),
             color=gender_color("Gender:N", available=gender_columns),
             tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Gender share:Q", title="Share of category", format=".1%"), alt.Tooltip("Category total:Q", title="Category total", format=",")],
         )
@@ -2496,7 +2520,7 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
         .mark_text(align="left", baseline="middle", dx=7, fontSize=11, fontWeight=800, color="#1E293B")
         .encode(
             y=alt.Y(f"{category_column}:N", sort=category_order, title=None),
-            x=alt.X("_total:Q", title="Records"),
+            x=alt.X("_total:Q", title="Records", scale=alt.Scale(domain=[0, x_upper], nice=False)),
             text=alt.Text("_total:Q", format=","),
         )
     )
@@ -2539,7 +2563,13 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
                     f"{category_column}:N",
                     sort=category_order,
                     title=None,
-                    axis=alt.Axis(labelAngle=-30, labelLimit=160, labelFontSize=10),
+                    axis=alt.Axis(
+                        labelAngle=-20,
+                        labelLimit=125,
+                        labelFontSize=10,
+                        labelBound=True,
+                        labelOverlap="parity",
+                    ),
                 ),
                 y=alt.Y("Records:Q", title="Records", stack="zero"),
                 color=gender_color("Gender:N", available=gender_columns),
@@ -2560,12 +2590,13 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
     long_chart = chart_data.melt(id_vars=[category_column, "Total"], value_vars=gender_columns, var_name="Gender", value_name="Records")
     long_chart["Gender share"] = long_chart["Records"].div(long_chart["Total"].where(long_chart["Total"].ne(0)))
     chart_height = max(height, min(850, 34 * len(category_order) + 80))
+    x_upper = chart_headroom(chart_data["Total"])
     chart = (
         alt.Chart(long_chart)
         .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
         .encode(
-            y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=520, labelFontSize=11, labelPadding=6)),
-            x=alt.X("Records:Q", title="Records", stack="zero"),
+            y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=420, labelFontSize=11, labelPadding=6)),
+            x=alt.X("Records:Q", title="Records", stack="zero", scale=alt.Scale(domain=[0, x_upper], nice=False)),
             color=gender_color("Gender:N", available=gender_columns),
             tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Gender share:Q", title="Share of category", format=".1%"), alt.Tooltip("Total:Q", title="Category total", format=",")],
         )
@@ -2576,7 +2607,7 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
         .mark_text(align="left", baseline="middle", dx=7, fontSize=11, fontWeight=800, color="#1E293B")
         .encode(
             y=alt.Y(f"{category_column}:N", sort=category_order, title=None),
-            x=alt.X("Total:Q", title="Records"),
+            x=alt.X("Total:Q", title="Records", scale=alt.Scale(domain=[0, x_upper], nice=False)),
             text=alt.Text("Total:Q", format=","),
         )
     )
@@ -2694,6 +2725,7 @@ def draw_request_type_bar(frame, height=190):
 
     type_order = summary["Request type"].tolist()
     type_colors = ["#2F7D69", "#D9A441", "#2563EB", "#DB2777", "#64748B"]
+    x_upper = chart_headroom(summary["Records"], fraction=0.35)
 
     base = alt.Chart(summary).encode(
         y=alt.Y(
@@ -2702,7 +2734,7 @@ def draw_request_type_bar(frame, height=190):
             title=None,
             axis=alt.Axis(labelLimit=360, labelFontSize=12, labelPadding=8),
         ),
-        x=alt.X("Records:Q", title="Records"),
+        x=alt.X("Records:Q", title="Records", scale=alt.Scale(domain=[0, x_upper], nice=False)),
     )
 
     bars = base.mark_bar(cornerRadiusEnd=6, opacity=0.94, stroke="#FFFFFF", strokeWidth=0.7).encode(
@@ -2812,7 +2844,18 @@ def draw_monthly_gender_column_bar(frame, height=340):
             interpolate="monotone",
         )
         .encode(
-            x=alt.X("year_month:N", sort=month_order, title=None, axis=alt.Axis(labelAngle=-30, labelFontSize=11)),
+            x=alt.X(
+                "year_month:N",
+                sort=month_order,
+                title=None,
+                axis=alt.Axis(
+                    labelAngle=-20,
+                    labelLimit=85,
+                    labelFontSize=11,
+                    labelBound=True,
+                    labelOverlap="parity",
+                ),
+            ),
             y=alt.Y("Records:Q", title="Records"),
             color=gender_color("information_seeker_gender:N", available=available_genders),
             tooltip=[
@@ -2833,7 +2876,8 @@ def draw_count_bar(frame, category_column, category_label, height=360):
     chart_data = frame.groupby(category_column, dropna=False).size().reset_index(name="Records").rename(columns={category_column: category_label}).sort_values("Records", ascending=False)
     chart_data["axis_label"] = chart_data[category_label].map(lambda value: short_axis_label(value, max_chars=24))
     axis_order = chart_data["axis_label"].tolist()
-    base = alt.Chart(chart_data).encode(x=alt.X("axis_label:N", sort=axis_order, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=160, labelFontSize=11)), y=alt.Y("Records:Q", title="Records"))
+    y_upper = chart_headroom(chart_data["Records"], fraction=0.14)
+    base = alt.Chart(chart_data).encode(x=alt.X("axis_label:N", sort=axis_order, title=None, axis=alt.Axis(labelAngle=-20, labelLimit=120, labelFontSize=11, labelBound=True, labelOverlap="parity")), y=alt.Y("Records:Q", title="Records", scale=alt.Scale(domain=[0, y_upper], nice=False)))
     bars = base.mark_bar(cornerRadiusEnd=6, color="#2F7D69", opacity=0.94, stroke="#FFFFFF", strokeWidth=0.7).encode(tooltip=[alt.Tooltip(f"{category_label}:N", title=category_label), alt.Tooltip("Records:Q", title="Records", format=",")])
     labels = base.mark_text(dy=-6, fontSize=11, fontWeight=700, color="#1E293B").encode(text=alt.Text("Records:Q", format=","))
     st.altair_chart(polish_chart((bars + labels).properties(height=height)), use_container_width=True)
@@ -4127,6 +4171,7 @@ if selected_tab == "CPV Work":
         cpv_order = cpv_chart_data["CPV"].astype(str).tolist()
         cpv_chart_height = max(280, min(760, 34 * len(cpv_order) + 80))
         cpv_chart_color = CPV_METRIC_COLORS.get(cpv_chart_metric, "#2F7D69")
+        cpv_x_upper = chart_headroom(cpv_chart_data[cpv_chart_metric])
 
         cpv_chart = (
             alt.Chart(cpv_chart_data)
@@ -4147,6 +4192,7 @@ if selected_tab == "CPV Work":
                 x=alt.X(
                     f"{cpv_chart_metric}:Q",
                     title=cpv_chart_metric,
+                    scale=alt.Scale(domain=[0, cpv_x_upper], nice=False),
                 ),
                 tooltip=[
                     alt.Tooltip("CPV:N", title="CPV"),
@@ -4174,7 +4220,7 @@ if selected_tab == "CPV Work":
             )
             .encode(
                 y=alt.Y("CPV:N", sort=cpv_order, title=None),
-                x=alt.X(f"{cpv_chart_metric}:Q"),
+                x=alt.X(f"{cpv_chart_metric}:Q", scale=alt.Scale(domain=[0, cpv_x_upper], nice=False)),
                 text=alt.Text(f"{cpv_chart_metric}:Q", format=","),
             )
         )
