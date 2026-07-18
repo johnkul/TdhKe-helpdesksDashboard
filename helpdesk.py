@@ -18,7 +18,7 @@ DEVELOPER_LOGO_PATH = BASE_DIR / "assets" / "developer-logo.png"
 STYLES_PATH = BASE_DIR / "assets" / "styles.css"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 PROCESSED_CACHE_PATH = BASE_DIR / "data" / "processed" / "helpdesk_processed_cache.pkl"
-PROCESSED_CACHE_VERSION = "2026-07-18-v8"
+PROCESSED_CACHE_VERSION = "2026-07-18-v20"
 
 APP_VERSION = "Version 1.0"
 APP_VERSION_DATE = "June 2026"
@@ -563,6 +563,290 @@ def harmonize_free_text(text, main_category_labels, default="Other Not Listed"):
         return cleaned
 
     return default
+
+
+# Extensible concept taxonomy for free-text protection concerns. Each rule maps
+# commonly used words, phrases and spelling variants to an existing listed
+# concern. Rules are evaluated before generic fuzzy label matching.
+PROTECTION_CONCERN_TEXT_RULES = [
+    {
+        "category_aliases": ["School dropout risk or dropped out", "School dropout", "Dropout risk"],
+        "keywords": ["dropout", "drop out", "dropped out", "not attending school", "left school", "school absenteeism"],
+    },
+    {
+        "category_aliases": ["Education support", "Educational support"],
+        "keywords": [
+            "scholastic material", "scholatic material", "scholastic matetial", "school material",
+            "learning material", "education material", "exercise book",
+            "textbook", "text book", "book", "uniform", "stationery",
+            "school supplies", "school fees", "school fee", "material support for school", "pencil", "pen",
+        ],
+    },
+    {
+        "category_aliases": ["Pre-Registration", "Pre Registration"],
+        "keywords": ["pre registration", "preregistration", "waiting for registration", "new arrival registration"],
+    },
+    {
+        "category_aliases": ["Unhcr Profiling Registration", "UNHCR registration", "Profiling registration"],
+        "keywords": ["unhcr registration", "unhcr profiling", "not appearing in the system", "profiling registration"],
+    },
+    {
+        "category_aliases": ["Card Separation", "Separation Card"],
+        "keywords": ["card separation", "separation card", "separate ration card", "card separated"],
+    },
+    {
+        "category_aliases": ["Bamba Chakula Issues", "Food card issue"],
+        "keywords": ["bamba chakula", "bamba pin", "pin issue", "card deactivation", "deactivation card", "deactivated card", "card desactivated", "card merging", "card marging", "card margin"],
+    },
+    {
+        "category_aliases": ["Alternative Food Collector"],
+        "keywords": ["alternative food collector", "alternative food collection", "alternative food collect", "altanative food collector", "food collector"],
+    },
+    {
+        "category_aliases": ["No Access Nfi", "NFI support", "Non food items"],
+        "keywords": ["clothes", "clothing", "shoe", "sandal", "sandle", "crocks", "soap", "sanitary pad", "sleeping material", "mattress", "blanket"],
+    },
+    {
+        "category_aliases": ["Basic Needs", "Material Support"],
+        "keywords": ["basic need", "bassic need", "material support", "need of material"],
+    },
+    {
+        "category_aliases": ["Child Abandonment"],
+        "keywords": ["child abandonment", "abandoned child", "child abandoned", "parent left child"],
+    },
+    {
+        "category_aliases": ["Lacking Parental Care Unaccompanied", "Unaccompanied child"],
+        "keywords": ["orphan", "orpha", "no parental care", "lacking parental care", "unaccompanied child", "no caregiver"],
+    },
+    {
+        "category_aliases": ["Child Pregnancy", "Teenage pregnancy"],
+        "keywords": ["child pregnancy", "teenage pregnancy", "teenage mother", "pregnant child"],
+    },
+    {
+        "category_aliases": ["No Access Food", "Food insecurity", "Food assistance", "Lack of food"],
+        "keywords": ["food", "hunger", "hungry", "ration", "starvation", "malnutrition", "no meals", "lack of meals"],
+    },
+    {
+        "category_aliases": ["Medical Support", "Health support", "Health services", "Health concern"],
+        "keywords": ["medical", "medicine", "medication", "hospital", "clinic", "health care", "healthcare", "treatment", "sick", "illness"],
+    },
+    {
+        "category_aliases": ["Shelter Need", "No Access Nfi", "Shelter support", "Shelter concern", "Inadequate shelter", "Shelter and NFI"],
+        "keywords": ["shelter", "tent", "house", "housing", "roof", "tarpaulin"],
+    },
+    {
+        "category_aliases": ["WASH support", "Water sanitation and hygiene", "Water and sanitation"],
+        "keywords": ["water", "latrine", "toilet", "sanitation", "hygiene", "soap", "bathing", "wash facility", "jerrycan"],
+    },
+    {
+        "category_aliases": ["Civil Registration Services", "Undocumented", "Documentation support", "Civil documentation", "Legal documentation"],
+        "keywords": ["documentation", "document", "birth certificate", "identity card", "id card", "registration", "ration card", "alien card"],
+    },
+    {
+        "category_aliases": ["Legal assistance", "Legal support", "Access to justice"],
+        "keywords": ["legal", "court", "justice", "lawyer", "police case", "arrest", "detention"],
+    },
+    {
+        "category_aliases": ["Sexual Violence", "Gender based violence", "GBV", "Sexual and gender based violence", "SGBV"],
+        "keywords": ["gbv", "sgbv", "rape", "defilement", "sexual violence", "sexual abuse", "domestic violence", "intimate partner violence", "physical violence by partner"],
+    },
+    {
+        "category_aliases": ["Dangerous Child Work", "Child labour", "Child labor", "Economic exploitation"],
+        "keywords": ["child labour", "child labor", "working child", "forced work", "economic exploitation"],
+    },
+    {
+        "category_aliases": ["Child marriage", "Early marriage", "Forced marriage"],
+        "keywords": ["child marriage", "early marriage", "forced marriage", "underage marriage", "married early"],
+    },
+    {
+        "category_aliases": ["Joining Family", "Family separation", "Unaccompanied or separated child", "Separated child"],
+        "keywords": ["family separation", "separated from family", "unaccompanied", "separated child", "missing child", "lost child", "child lost", "child got lost", "child disappeared", "looking for her children", "looking for children", "joining familly", "joining jamily", "family tracing"],
+    },
+    {
+        "category_aliases": ["Parental Neglect", "Child Neglect", "Neglect"],
+        "keywords": [
+            "neglect", "neglet", "abandoned", "abandonment",
+            "lack of parental care", "no caregiver", "poor care",
+            "mother left the children", "mother left children",
+            "father left the children", "father left children",
+            "parent left the children", "parent left children",
+            "leave two children", "left two children",
+            "went back to country of origin", "returned to country of origin",
+        ],
+    },
+    {
+        "category_aliases": ["Physical Violence", "Child abuse", "Violence against children", "Physical abuse"],
+        "keywords": ["child abuse", "beating child", "beaten child", "physical abuse", "emotional abuse", "violence against child", "corporal punishment"],
+    },
+    {
+        "category_aliases": ["Child exploitation", "Exploitation"],
+        "keywords": ["exploitation", "forced begging", "begging", "used for work"],
+    },
+    {
+        "category_aliases": ["Trafficking", "Human trafficking"],
+        "keywords": ["trafficking", "trafficked", "smuggling", "abduction", "kidnapping"],
+    },
+    {
+        "category_aliases": ["Psychosocial support", "Mental health and psychosocial support", "MHPSS"],
+        "keywords": ["psychosocial", "mental health", "stress", "distress", "trauma", "depression", "anxiety", "counselling", "counseling"],
+    },
+    {
+        "category_aliases": ["Physical Violence", "Safety and security", "Security concern", "Threats or violence"],
+        "keywords": ["insecurity", "unsafe", "security", "threat", "treatened", "treatened", "harassment", "attack", "community violence", "conflict"],
+    },
+    {
+        "category_aliases": ["Livelihood support", "Livelihood concern", "Cash assistance"],
+        "keywords": ["livelihood", "income", "employment", "job", "business", "cash assistance", "financial support", "money"],
+    },
+    {
+        "category_aliases": ["Child Needs Assistive Devices", "Disability support", "Disability inclusion", "Assistive devices"],
+        "keywords": ["disability", "wheelchair", "assistive device", "walking aid", "hearing aid", "disability support", "special needs"],
+    },
+]
+
+
+def harmonize_protection_concern_text(text, main_category_labels, default="Other Not Listed"):
+    """Map protection free text to the closest canonical listed concern."""
+    cleaned = clean_text(text)
+    if pd.isna(cleaned):
+        return default
+    normalized = normalize_response(cleaned)
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized or "")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    normalized_labels = {
+        normalize_response(label): str(label)
+        for label in main_category_labels
+        if label and not pd.isna(label)
+    }
+    for rule in PROTECTION_CONCERN_TEXT_RULES:
+        if not any(keyword in normalized for keyword in rule["keywords"]):
+            continue
+        for alias in rule["category_aliases"]:
+            alias_normalized = normalize_response(alias)
+            if alias_normalized in normalized_labels:
+                return normalized_labels[alias_normalized]
+        # If the workbook label contains extra wording, reuse that exact label.
+        for label_normalized, label in normalized_labels.items():
+            if any(normalize_response(alias) in label_normalized for alias in rule["category_aliases"]):
+                return label
+        # Token-overlap handles workbook labels with qualifiers or slightly
+        # different wording, while still limiting output to a listed concern.
+        best_label = None
+        best_score = 0.0
+        for label_normalized, label in normalized_labels.items():
+            label_tokens = set(re.findall(r"[a-z0-9]+", label_normalized or ""))
+            for alias in rule["category_aliases"]:
+                alias_tokens = set(re.findall(r"[a-z0-9]+", normalize_response(alias) or ""))
+                if not alias_tokens:
+                    continue
+                score = len(label_tokens & alias_tokens) / len(alias_tokens)
+                if score > best_score:
+                    best_label, best_score = label, score
+        if best_label is not None and best_score >= 0.5:
+            return best_label
+        # The concept was recognised, but no corresponding listed category was
+        # found. Preserve the text for review instead of inventing a category.
+        return harmonize_free_text(cleaned, main_category_labels, default=default)
+
+    return harmonize_free_text(cleaned, main_category_labels, default=default)
+
+
+def standardize_protection_concern_label(value):
+    """Apply preferred Child Protection terminology to concern labels."""
+    cleaned = clean_text(value)
+    if pd.isna(cleaned):
+        return cleaned
+    normalized = normalize_response(cleaned)
+    family_reunification_terms = {
+        "joining family", "joining familly", "joining jamily",
+        "family reunion", "family reunification", "reunification with family",
+    }
+    if normalized in family_reunification_terms:
+        return "Family Reunification"
+    if normalized in {
+        "separation card", "card separation", "card separation with the children because the father was died",
+    }:
+        return "Card Separation"
+    if (
+        "bamba chakula" in normalized
+        or "bamba pin" in normalized
+        or normalized in {
+            "pin issue", "card deactivation", "deactivation card",
+            "card desactivated", "card merging", "card marging", "card margin",
+        }
+    ):
+        return "Bamba Chakula Issues"
+    if normalized in {"child contact with law", "child conflict with law"}:
+        return "Children in Contact with the Law"
+    if normalized in {
+        "sexual violence", "intimate partner violence", "gender based violence",
+        "gender-based violence", "gbv", "sgbv",
+    }:
+        return "Gender Based Violence"
+    if normalized == "age correction":
+        return "Civil Registration Services"
+    if "breast feeding is not enough" in normalized or "breastfeeding is not enough" in normalized:
+        return "No Access Food"
+    if (
+        "went back to country of origin" in normalized
+        and any(term in normalized for term in ["leave two children", "left two children", "leave the children"])
+    ):
+        return "Parental Neglect"
+    return cleaned
+
+
+def migrate_processed_cache_data(processed_data):
+    """Apply display-rule migrations even when the fast processed cache is used."""
+    if not isinstance(processed_data, tuple) or len(processed_data) != 6:
+        return processed_data
+    dashboard_records, secure_records, protection, information, referrals, kpis = processed_data
+    if isinstance(protection, pd.DataFrame) and "protection_concern" in protection.columns:
+        protection = protection.copy()
+        protection["protection_concern"] = protection["protection_concern"].map(
+            standardize_protection_concern_label
+        )
+    if isinstance(information, pd.DataFrame) and "general_information_need" in information.columns:
+        information = information.copy()
+        information["general_information_need"] = information["general_information_need"].map(
+            standardize_information_need_label
+        )
+    return dashboard_records, secure_records, protection, information, referrals, kpis
+
+
+def standardize_information_need_label(value):
+    """Consolidate high-confidence information-request synonyms."""
+    cleaned = clean_text(value)
+    if pd.isna(cleaned):
+        return cleaned
+    normalized = normalize_response(cleaned)
+
+    if normalized in {"scholastic materials", "scholatic materials"} or any(
+        phrase in normalized for phrase in ["senior school", "sunior school", "school information"]
+    ):
+        return "Education"
+    if normalized in {
+        "need unhcr registration", "unhcr registration", "need of unhcr registration",
+        "in need of unhcr registration", "unhcr profiling registration",
+    }:
+        return "UNHCR Registration"
+    if normalized in {
+        "undocumented child", "card managing", "card management", "card separation",
+    }:
+        return "Legal Services"
+    if normalized in {"materials support", "material support", "basic needs", "basic need"}:
+        return "Core Relief Items"
+    if normalized in {"disability", "disability services", "assistive device support"}:
+        return "Disability Support Services"
+    if normalized in {"dcs", "department of children services", "children services"}:
+        return "Child Protection Services"
+    if normalized in {"shelter request", "shelter need", "shelter services"}:
+        return "Shelter Access"
+    if normalized in {"gbv support services", "gender based violence support services"}:
+        return "GBV Support Services"
+    if normalized in {"wash access", "water sanitation and hygiene access"}:
+        return "WASH Access"
+    return cleaned
 
 
 def canonical_organization_label(value):
@@ -1164,7 +1448,7 @@ def load_data(file_signature):
             with PROCESSED_CACHE_PATH.open("rb") as cache_file:
                 cached_payload = pickle.load(cache_file)
             if cached_payload.get("cache_key") == processed_cache_key:
-                return cached_payload["data"]
+                return migrate_processed_cache_data(cached_payload["data"])
         except Exception:
             # If the processed cache is stale/corrupt, fall back to rebuilding
             # from Excel rather than blocking the app.
@@ -1343,28 +1627,61 @@ def load_data(file_signature):
     # This prevents charts/tables from keeping a generic "Other Not Listed"
     # bucket when the respondent actually specified a meaningful value.
     # ------------------------------------------------------------------
-    main_protection_labels = [
+    protection_other_codes = protection["protection_concern_code"].astype(str).str.contains(
+        r"^concern_.*other", case=False, na=False, regex=True
+    ) if not protection.empty else pd.Series(dtype=bool)
+    observed_protection_labels = (
+        protection.loc[~protection_other_codes, "protection_concern"].dropna().astype(str).tolist()
+        if not protection.empty
+        else []
+    )
+    main_protection_labels = list(dict.fromkeys([
         value
-        for value in protection_label_map.values()
+        for value in list(protection_label_map.values()) + observed_protection_labels
         if value and normalize_response(value) not in ["other", "other not listed", "others", "other specify"]
-    ]
+    ]))
     main_information_labels = [
         value
         for value in information_label_map.values()
         if value and normalize_response(value) not in ["other", "other not listed", "others", "other specify"]
     ]
 
-    if not protection.empty and "concern_other_specify" in records.columns:
-        concern_specify_values = records.set_index("record_id")["concern_other_specify"].to_dict()
-        concern_other_mask = protection["protection_concern_code"].astype(str).eq("concern_other_not_listed")
+    concern_specify_columns = [
+        column
+        for column in records.columns
+        if str(column).startswith("concern_") and str(column).endswith("_specify")
+    ]
+    if "concern_other_specify" in concern_specify_columns:
+        concern_specify_columns.remove("concern_other_specify")
+        concern_specify_columns.insert(0, "concern_other_specify")
+
+    if not protection.empty and concern_specify_columns:
+        concern_specify_values = records.set_index("record_id")[concern_specify_columns].apply(
+            lambda row: next(
+                (clean_text(value) for value in row if not pd.isna(clean_text(value))),
+                pd.NA,
+            ),
+            axis=1,
+        ).to_dict()
+        concern_other_mask = protection["protection_concern_code"].astype(str).str.contains(
+            r"^concern_.*other",
+            case=False,
+            na=False,
+            regex=True,
+        )
         protection.loc[concern_other_mask, "protection_concern"] = protection.loc[
             concern_other_mask, "record_id"
         ].map(
-            lambda record_id: harmonize_free_text(
+            lambda record_id: harmonize_protection_concern_text(
                 clean_text(concern_specify_values.get(record_id)),
                 main_protection_labels,
                 default="Other Not Listed",
             )
+        )
+
+    if not protection.empty and "protection_concern" in protection.columns:
+        protection["protection_concern"] = protection["protection_concern"].map(
+            standardize_protection_concern_label
         )
 
     if not information.empty and "info_other_specify" in records.columns:
@@ -1378,6 +1695,11 @@ def load_data(file_signature):
                 main_information_labels,
                 default="Other Not Listed",
             )
+        )
+
+    if not information.empty and "general_information_need" in information.columns:
+        information["general_information_need"] = information["general_information_need"].map(
+            standardize_information_need_label
         )
 
     # Referral partner harmonization:
@@ -1425,6 +1747,22 @@ def load_data(file_signature):
 
     if not referrals.empty and "referral_partner" in referrals.columns:
         referrals["referral_partner"] = referrals["referral_partner"].map(normalize_organization_label)
+        # Partner selections are valid only for cases whose final action was a
+        # partner-agency referral. Keep one row per case-partner assignment;
+        # a case sent to two partners legitimately contributes two mentions.
+        partner_referred_ids = set(
+            records.loc[
+                records["referral_status"].eq("Referred to partner agency"),
+                "record_id",
+            ].astype(str)
+        )
+        referrals = referrals[
+            referrals["record_id"].astype(str).isin(partner_referred_ids)
+        ].copy()
+        referrals = referrals.drop_duplicates(
+            subset=["record_id", "referral_partner"],
+            keep="first",
+        )
 
     # Keep two record frames:
     # - secure_records keeps PII for password-protected DQA follow-up tables.
@@ -1483,7 +1821,7 @@ def load_data(file_signature):
         # work even when the filesystem is read-only.
         pass
 
-    return processed_data
+    return migrate_processed_cache_data(processed_data)
 
 # -----------------------------------------------------------------------------
 # Filter, chart, table, and UI helpers
@@ -2976,6 +3314,7 @@ with st.sidebar:
         )
     with st.expander("Data & cache status", expanded=False):
         st.caption(f"Source: {DATA_FILE_PATH.name}")
+        st.caption(f"Transformation rules: {PROCESSED_CACHE_VERSION}")
         st.caption(f"Source records: {len(records):,}")
         st.caption(f"Last updated: {file_signature[3] if file_signature[3] else 'Unknown'}")
         if st.button("Refresh data cache", key="admin_refresh_helpdesk_cache", use_container_width=True):
@@ -3257,7 +3596,6 @@ else:
         unsafe_allow_html=True,
     )
 
-st.divider()
 helpdesk_section_intro(selected_tab, total_records)
 if selected_tab != "Overview":
     st.button("← Back to Overview", key="helpdesk_back_to_overview", on_click=helpdesk_go_to_overview)
@@ -3511,10 +3849,28 @@ if selected_tab == "Referrals":
     show_gender_table(filtered_records, "follow_up_required_clean", "Follow-up required")
     st.divider()
     st.subheader("Referral Partners by Gender")
+    referred_case_count = int(
+        filtered_records["referral_status"].astype(str).eq("Referred to partner agency").sum()
+    )
+    partner_record_count = int(filtered_referrals["record_id"].nunique()) if "record_id" in filtered_referrals.columns else 0
+    partner_assignment_count = len(filtered_referrals)
+    st.caption(
+        f"Reconciliation: {referred_case_count:,} referred cases; "
+        f"{partner_record_count:,} cases with a recorded partner; "
+        f"{partner_assignment_count:,} partner assignments."
+    )
+    if partner_record_count < referred_case_count:
+        st.warning(
+            f"{referred_case_count - partner_record_count:,} referred case(s) do not have a partner recorded."
+        )
+    if partner_assignment_count > partner_record_count:
+        st.info(
+            f"{partner_assignment_count - partner_record_count:,} additional assignment(s) arise because some cases were referred to more than one partner."
+        )
     referral_rank = st.radio("Rank", ["Highest values", "Lowest values"], horizontal=True, index=0, key="referral_rank")
     referral_top_n = st.radio("Number of categories", [10, 15, 25], horizontal=True, index=1, key="referral_top_n")
     draw_gender_bar(filtered_referrals, "referral_partner", top_n=referral_top_n, height=560, ascending=referral_rank == "Lowest values")
-    st.caption("Full table (all categories, unaffected by chart slicing)")
+    st.caption("Full partner-assignment table (all categories, unaffected by chart slicing)")
     show_gender_table(filtered_referrals, "referral_partner", "Referral partner", top_n=None)
     st.markdown("#### Referral Partner by Age Group")
     st.caption("Select one or more referral partners to view the age group and gender breakdown.")

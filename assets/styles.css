@@ -58,7 +58,7 @@
     display: flex;
     align-items: center;
     gap: .9rem;
-    margin: .25rem 0 1rem;
+    margin: .1rem 0 .7rem;
     padding: .9rem 1rem;
     border: 1px solid rgba(47, 125, 105, .22);
     border-radius: 14px;
@@ -156,6 +156,16 @@
     padding-top: 1.2rem;
     padding-bottom: 2rem;
     max-width: 1500px;
+}
+
+/* Keep intentional subsection separators readable without Streamlit's
+   oversized component-level whitespace. */
+div[data-testid="stDivider"] {
+    margin: .55rem 0 !important;
+}
+
+div[data-testid="stDivider"] hr {
+    margin: 0 !important;
 }
 
 /* ----- Sidebar ------------------------------------------------------------ */
@@ -1325,7 +1335,7 @@ section[data-testid="stSidebar"] [aria-selected="true"] {
     display: flex;
     flex-wrap: wrap;
     gap: 0.55rem;
-    margin: 0.15rem 0 0.7rem;
+    margin: 0.1rem 0 0.4rem;
     padding: 0.7rem 0.85rem;
     border: 1px solid rgba(47, 125, 105, 0.24);
     border-radius: 14px;
