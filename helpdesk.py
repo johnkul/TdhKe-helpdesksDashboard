@@ -18,7 +18,7 @@ DEVELOPER_LOGO_PATH = BASE_DIR / "assets" / "developer-logo.png"
 STYLES_PATH = BASE_DIR / "assets" / "styles.css"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 PROCESSED_CACHE_PATH = BASE_DIR / "data" / "processed" / "helpdesk_processed_cache.pkl"
-PROCESSED_CACHE_VERSION = "2026-07-18-v20"
+PROCESSED_CACHE_VERSION = "2026-07-18-v21"
 
 APP_VERSION = "Version 1.0"
 APP_VERSION_DATE = "June 2026"
@@ -127,6 +127,9 @@ CHILD_DISABILITY_OTHER_COLUMNS = [
 ]
 
 DISABILITY_TYPE_STANDARD_MAP = {
+    "chronic illnesses": "Chronic Illnesses",
+    "chronic illness": "Chronic Illnesses",
+    "chronic illnesses (any disease that is dependent on medicines e.g. diabetes, blood pressure etc.)": "Chronic Illnesses",
     "visual impairment": "Visual Impairment",
     "visual disability": "Visual Impairment",
     "seeing impairment": "Visual Impairment",
@@ -452,6 +455,8 @@ def standardize_disability_type(value):
         return "Self-Care Impairment"
     if any(token in normalized for token in ["speech", "communication", "communicat", "mute"]):
         return "Speech Impairment"
+    if "chronic illness" in normalized:
+        return "Chronic Illnesses"
     return str(value)
 
 
@@ -1952,6 +1957,16 @@ def polish_chart(chart):
     )
 
 
+def display_category_value(value):
+    """Apply concise presentation labels without altering retained raw values."""
+    if pd.isna(value):
+        return value
+    normalized = normalize_response(value)
+    if normalized and "chronic illness" in normalized:
+        return "Chronic Illnesses"
+    return value
+
+
 def gender_pivot_table(frame, category_column, category_label, top_n=None):
     if frame.empty or category_column not in frame.columns:
         return pd.DataFrame()
@@ -2451,6 +2466,9 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
         st.info("No records match the selected filters.")
         return
     chart_data = chart_data.reset_index()
+    if category_column == "general_information_need":
+        chart_data[category_column] = chart_data[category_column].map(display_category_value)
+        chart_data = chart_data.groupby(category_column, as_index=False).sum(numeric_only=True)
     gender_columns = [
         col
         for col in chart_data.columns
@@ -2459,6 +2477,8 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
     totals = chart_data.assign(_total=chart_data[gender_columns].sum(axis=1))
     category_order = totals.sort_values("_total", ascending=ascending)[category_column].astype(str).tolist()
     long_chart = chart_data.melt(id_vars=[category_column], value_vars=gender_columns, var_name="Gender", value_name="Records")
+    long_chart["Category total"] = long_chart.groupby(category_column)["Records"].transform("sum")
+    long_chart["Gender share"] = long_chart["Records"].div(long_chart["Category total"].where(long_chart["Category total"].ne(0)))
     chart_height = max(height, min(900, 36 * len(category_order) + 80))
     chart = (
         alt.Chart(long_chart)
@@ -2467,11 +2487,20 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
             y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=700, labelFontSize=11, labelPadding=6)),
             x=alt.X("Records:Q", title="Records", stack="zero"),
             color=gender_color("Gender:N", available=gender_columns),
-            tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=",")],
+            tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Gender share:Q", title="Share of category", format=".1%"), alt.Tooltip("Category total:Q", title="Category total", format=",")],
         )
         .properties(height=chart_height)
     )
-    st.altair_chart(polish_chart(chart), use_container_width=True)
+    totals_layer = (
+        alt.Chart(totals)
+        .mark_text(align="left", baseline="middle", dx=7, fontSize=11, fontWeight=800, color="#1E293B")
+        .encode(
+            y=alt.Y(f"{category_column}:N", sort=category_order, title=None),
+            x=alt.X("_total:Q", title="Records"),
+            text=alt.Text("_total:Q", format=","),
+        )
+    )
+    st.altair_chart(polish_chart(chart + totals_layer), use_container_width=True)
 
 
 def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
@@ -2480,28 +2509,78 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
         st.info("No records match the selected filters.")
         return
     chart_data = chart_data.reset_index()
+    if category_column in {"disability_type", "adult_person_impairment_type", "child_disability_type"}:
+        chart_data[category_column] = chart_data[category_column].map(display_category_value)
+        chart_data = chart_data.groupby(category_column, as_index=False).sum(numeric_only=True)
     gender_columns = [
         col
         for col in chart_data.columns
         if col != category_column and pd.to_numeric(chart_data[col], errors="coerce").fillna(0).sum() > 0
     ]
-    category_order = chart_data.assign(Total=chart_data[gender_columns].sum(axis=1)).sort_values("Total", ascending=False)[category_column].astype(str).tolist()
-    max_chars = 18 if category_column in ["age_group", "helpdesk_location"] else 24
-    chart_data["axis_label"] = chart_data[category_column].map(lambda value: short_axis_label(value, max_chars=max_chars))
-    axis_order = [chart_data.loc[chart_data[category_column].astype(str).eq(value), "axis_label"].iloc[0] for value in category_order if not chart_data.loc[chart_data[category_column].astype(str).eq(value)].empty]
-    long_chart = chart_data.melt(id_vars=[category_column, "axis_label"], value_vars=gender_columns, var_name="Gender", value_name="Records")
+    chart_data["Total"] = chart_data[gender_columns].sum(axis=1)
+    if category_column == "age_group":
+        available_categories = set(chart_data[category_column].astype(str))
+        category_order = [age for age in AGE_GROUP_ORDER if age in available_categories]
+        category_order += [value for value in chart_data[category_column].astype(str) if value not in category_order]
+        long_chart = chart_data.melt(
+            id_vars=[category_column, "Total"],
+            value_vars=gender_columns,
+            var_name="Gender",
+            value_name="Records",
+        )
+        long_chart["Gender share"] = long_chart["Records"].div(
+            long_chart["Total"].where(long_chart["Total"].ne(0))
+        )
+        age_chart = (
+            alt.Chart(long_chart)
+            .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
+            .encode(
+                x=alt.X(
+                    f"{category_column}:N",
+                    sort=category_order,
+                    title=None,
+                    axis=alt.Axis(labelAngle=-30, labelLimit=160, labelFontSize=10),
+                ),
+                y=alt.Y("Records:Q", title="Records", stack="zero"),
+                color=gender_color("Gender:N", available=gender_columns),
+                tooltip=[
+                    alt.Tooltip(f"{category_column}:N", title="Age group"),
+                    alt.Tooltip("Gender:N", title="Gender"),
+                    alt.Tooltip("Records:Q", title="Records", format=","),
+                    alt.Tooltip("Gender share:Q", title="Share of age group", format=".1%"),
+                    alt.Tooltip("Total:Q", title="Age-group total", format=","),
+                ],
+            )
+            .properties(height=height)
+        )
+        st.altair_chart(polish_chart(age_chart), use_container_width=True)
+        return
+    else:
+        category_order = chart_data.sort_values("Total", ascending=False)[category_column].astype(str).tolist()
+    long_chart = chart_data.melt(id_vars=[category_column, "Total"], value_vars=gender_columns, var_name="Gender", value_name="Records")
+    long_chart["Gender share"] = long_chart["Records"].div(long_chart["Total"].where(long_chart["Total"].ne(0)))
+    chart_height = max(height, min(850, 34 * len(category_order) + 80))
     chart = (
         alt.Chart(long_chart)
         .mark_bar(cornerRadiusEnd=5, opacity=0.92, stroke="#FFFFFF", strokeWidth=0.7)
         .encode(
-            x=alt.X("axis_label:N", sort=axis_order, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=150, labelFontSize=10)),
-            y=alt.Y("Records:Q", title="Records", stack="zero"),
+            y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=520, labelFontSize=11, labelPadding=6)),
+            x=alt.X("Records:Q", title="Records", stack="zero"),
             color=gender_color("Gender:N", available=gender_columns),
-            tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=",")],
+            tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Gender share:Q", title="Share of category", format=".1%"), alt.Tooltip("Total:Q", title="Category total", format=",")],
         )
-        .properties(height=height)
+        .properties(height=chart_height)
     )
-    st.altair_chart(polish_chart(chart), use_container_width=True)
+    total_labels = (
+        alt.Chart(chart_data)
+        .mark_text(align="left", baseline="middle", dx=7, fontSize=11, fontWeight=800, color="#1E293B")
+        .encode(
+            y=alt.Y(f"{category_column}:N", sort=category_order, title=None),
+            x=alt.X("Total:Q", title="Records"),
+            text=alt.Text("Total:Q", format=","),
+        )
+    )
+    st.altair_chart(polish_chart(chart + total_labels), use_container_width=True)
 
 
 def draw_total_donut(frame, category_column, category_label, height=320, min_label_share=0.04):
@@ -2657,12 +2736,49 @@ def draw_status_donut_pair(frame, status_column, height=300):
     if frame.empty or status_column not in frame.columns:
         st.info("No records match the selected filters.")
         return
-    status_cols = st.columns(2)
-    for column, status in zip(status_cols, ["No Disability", "Has Disability"]):
-        with column:
-            st.caption(status)
-            status_frame = frame[frame[status_column].astype(str).eq(status)]
-            draw_total_donut(status_frame, "information_seeker_gender", "Gender", height=height, min_label_share=0.06)
+    status_data = frame[[status_column, "information_seeker_gender"]].copy()
+    status_data[status_column] = status_data[status_column].fillna("[Missing]").astype(str)
+    status_data["Gender"] = status_data["information_seeker_gender"].fillna("[Missing]").astype(str)
+    status_data = status_data[status_data[status_column].isin(["No Disability", "Has Disability"])]
+    if status_data.empty:
+        st.info("No disability status data for the selected filters.")
+        return
+    grouped = status_data.groupby(["Gender", status_column], dropna=False).size().reset_index(name="Records")
+    overall = status_data.groupby(status_column, dropna=False).size().reset_index(name="Records")
+    overall["Gender"] = "Overall"
+    grouped = pd.concat([overall, grouped], ignore_index=True)
+    grouped["Gender total"] = grouped.groupby("Gender")["Records"].transform("sum")
+    grouped["Share"] = grouped["Records"] / grouped["Gender total"]
+    grouped["Label"] = grouped.apply(lambda row: f"{row['Share']:.1%}" if row["Share"] >= 0.07 else "", axis=1)
+    gender_order = ["Overall"] + [gender for gender in GENDER_ORDER if gender in set(grouped["Gender"])]
+    status_order = ["No Disability", "Has Disability"]
+    grouped["Status order"] = grouped[status_column].map({status: index for index, status in enumerate(status_order)})
+    grouped = grouped.sort_values(["Gender", "Status order"])
+    grouped["Cumulative share"] = grouped.groupby("Gender")["Share"].cumsum()
+    grouped["Label position"] = grouped["Cumulative share"] - (grouped["Share"] / 2)
+    status_chart = (
+        alt.Chart(grouped)
+        .mark_bar(cornerRadiusEnd=5, stroke="#FFFFFF", strokeWidth=0.8)
+        .encode(
+            y=alt.Y("Gender:N", sort=gender_order, title=None),
+            x=alt.X("Share:Q", stack="zero", title="Share within gender", axis=alt.Axis(format="%"), scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color(f"{status_column}:N", title="Disability status", scale=alt.Scale(domain=status_order, range=[STATUS_COLORS[value] for value in status_order]), legend=alt.Legend(orient="bottom")),
+            order=alt.Order("Status order:Q", sort="ascending"),
+            tooltip=[alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip(f"{status_column}:N", title="Status"), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Share:Q", title="Share within gender", format=".1%")],
+        )
+        .properties(height=max(height, 38 * len(gender_order) + 70))
+    )
+    status_labels = (
+        alt.Chart(grouped)
+        .mark_text(fontSize=11, fontWeight=800, color="#FFFFFF")
+        .encode(
+            y=alt.Y("Gender:N", sort=gender_order, title=None),
+            x=alt.X("Label position:Q", scale=alt.Scale(domain=[0, 1])),
+            text=alt.Text("Label:N"),
+            tooltip=[alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip(f"{status_column}:N", title="Status"), alt.Tooltip("Records:Q", title="Records", format=","), alt.Tooltip("Share:Q", title="Share within gender", format=".1%")],
+        )
+    )
+    st.altair_chart(polish_chart(status_chart + status_labels), use_container_width=True)
 
 
 def draw_monthly_gender_column_bar(frame, height=340):
