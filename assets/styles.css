@@ -1331,6 +1331,10 @@ section[data-testid="stSidebar"] [aria-selected="true"] {
     font-size: 0.88rem;
 }
 
+section[data-testid="stSidebar"] [data-testid="stDateInput"] {
+    width: 100% !important;
+}
+
 .section-context-strip {
     display: flex;
     flex-wrap: wrap;

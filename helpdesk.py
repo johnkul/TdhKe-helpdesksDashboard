@@ -1847,6 +1847,7 @@ def sanitize_multiselect_state(key, options):
 def reset_filters(default_from_date, max_date):
     st.session_state["from_date_filter"] = default_from_date
     st.session_state["to_date_filter"] = max_date
+    st.session_state.pop("date_range_filter", None)
     for key in FILTER_KEYS:
         st.session_state[key] = []
     st.session_state["records_search"] = ""
@@ -3275,10 +3276,14 @@ default_from_date = min_date
 calendar_min_date = pd.Timestamp(year=min_date.year, month=1, day=1).date()
 calendar_max_date = pd.Timestamp(year=max_date.year, month=12, day=31).date()
 
-if "from_date_filter" not in st.session_state:
-    st.session_state["from_date_filter"] = default_from_date
-if "to_date_filter" not in st.session_state:
-    st.session_state["to_date_filter"] = max_date
+if "from_date_filter" not in st.session_state or "to_date_filter" not in st.session_state:
+    legacy_date_range = st.session_state.pop("date_range_filter", None)
+    if isinstance(legacy_date_range, (tuple, list)) and len(legacy_date_range) == 2:
+        legacy_from_date, legacy_to_date = legacy_date_range
+    else:
+        legacy_from_date, legacy_to_date = default_from_date, max_date
+    st.session_state.setdefault("from_date_filter", legacy_from_date)
+    st.session_state.setdefault("to_date_filter", legacy_to_date)
 
 with st.sidebar:
     st.header("Dashboard Controls")
@@ -3344,11 +3349,23 @@ with st.sidebar:
         "gold",
     )
     with st.expander("Date range", expanded=True):
-        date_cols = st.columns(2)
-        with date_cols[0]:
-            selected_from_date = st.date_input("From", min_value=calendar_min_date, max_value=calendar_max_date, key="from_date_filter")
-        with date_cols[1]:
-            selected_to_date = st.date_input("To", min_value=calendar_min_date, max_value=calendar_max_date, key="to_date_filter")
+        st.caption("Click each date field to open its calendar and select the reporting period.")
+        selected_from_date = st.date_input(
+            "From",
+            min_value=calendar_min_date,
+            max_value=calendar_max_date,
+            format="DD/MM/YYYY",
+            key="from_date_filter",
+            help="Select the first date included in the reporting period.",
+        )
+        selected_to_date = st.date_input(
+            "To",
+            min_value=calendar_min_date,
+            max_value=calendar_max_date,
+            format="DD/MM/YYYY",
+            key="to_date_filter",
+            help="Select the last date included in the reporting period.",
+        )
 
     if selected_from_date > selected_to_date:
         st.error("From date cannot be after To date.")
