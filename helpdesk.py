@@ -18,7 +18,7 @@ DEVELOPER_LOGO_PATH = BASE_DIR / "assets" / "developer-logo.png"
 STYLES_PATH = BASE_DIR / "assets" / "styles.css"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 PROCESSED_CACHE_PATH = BASE_DIR / "data" / "processed" / "helpdesk_processed_cache.pkl"
-PROCESSED_CACHE_VERSION = "2026-07-17-v3"
+PROCESSED_CACHE_VERSION = "2026-07-18-v8"
 
 APP_VERSION = "Version 1.0"
 APP_VERSION_DATE = "June 2026"
@@ -274,6 +274,18 @@ def normalize_response(value):
     return re.sub(r"\s+", " ", value)
 
 
+def consent_is_declined(value):
+    """Return True only for an explicit refusal of consent."""
+    normalized = normalize_response(value)
+    if normalized is None:
+        return False
+    return normalized in {
+        "no", "n", "0", "false", "declined", "decline", "refused",
+        "refuse", "not consented", "do not consent", "dont consent",
+        "i do not consent", "i dont consent", "consent not given",
+    }
+
+
 def staff_name_key(value):
     """Create a robust matching key for CPV/staff names."""
     value = normalize_response(value)
@@ -457,12 +469,35 @@ def specified_disability_type(row, columns):
         if pd.isna(value):
             continue
         normalized = normalize_response(value)
-        if normalized in generic_values or normalized.startswith("other disability"):
+        if normalized in generic_values:
             continue
+        # Some exports repeat the option label inside the specification, for
+        # example "Other disability: epilepsy". Harmonize the actual detail.
+        if normalized.startswith("other disability"):
+            value = re.sub(
+                r"^other\s+disabilit(?:y|ies)\s*[:;\-–—]?\s*",
+                "",
+                str(value),
+                flags=re.IGNORECASE,
+            ).strip()
+            if not value:
+                continue
         standardized = standardize_disability_type(value)
         if standardized != "None":
             return standardized
     return "None"
+
+
+def is_other_disability_response(value):
+    """Recognize Other Disability despite Kobo/export formatting variations."""
+    normalized = normalize_response(value)
+    if normalized is None:
+        return False
+    generic = {
+        "other", "others", "other disability", "other disabilities",
+        "other specify", "other specified",
+    }
+    return normalized in generic or ("other" in normalized and "disabil" in normalized)
 
 
 def safe_label_from_code(value):
@@ -967,7 +1002,18 @@ def derive_child_disability_status(row):
     if not is_child(row):
         return "No Disability"
     response = normalize_response(row.get("has_disability"))
-    return "Has Disability" if response in ["yes", "y", "true", "1"] else "No Disability"
+    if response not in ["yes", "y", "true", "1"]:
+        return "No Disability"
+
+    disability_type = clean_text(row.get("child_disability_type"))
+    normalized_type = normalize_response(disability_type) if not pd.isna(disability_type) else None
+    is_other_or_missing = normalized_type is None or is_other_disability_response(disability_type)
+    if is_other_or_missing:
+        specified_type = specified_disability_type(row, ["child_disability_type_other"])
+        if specified_type == "None":
+            return "No Disability"
+
+    return "Has Disability"
 
 
 def derive_child_disability_type(row):
@@ -976,12 +1022,30 @@ def derive_child_disability_type(row):
     disability_type = clean_text(row.get("child_disability_type"))
     invalid = {"other", "others", "other disability", "other disabilities", "other specify", "other specified", "none", "none of the above", "not applicable", "n/a", "na", "nil"}
     normalized_type = normalize_response(disability_type) if not pd.isna(disability_type) else None
-    if normalized_type is not None and normalized_type not in invalid and not normalized_type.startswith("other disability"):
+    is_other_disability = normalized_type in invalid or is_other_disability_response(disability_type)
+    if normalized_type is not None and not is_other_disability:
         return standardize_disability_type(disability_type)
-    specified_type = specified_disability_type(row, CHILD_DISABILITY_OTHER_COLUMNS)
+
+    # The form's authoritative detail field for the Other Disability option.
+    specified_type = specified_disability_type(row, ["child_disability_type_other"])
     if specified_type != "None":
         return specified_type
-    return "Not specified"
+
+    # Retain compatibility with alternate Kobo export suffixes only if the
+    # authoritative field is absent or blank.
+    child_other_columns = list(CHILD_DISABILITY_OTHER_COLUMNS)
+    child_other_columns.extend(
+        column
+        for column in row.index
+        if column not in child_other_columns
+        and "child" in str(column).lower()
+        and "disability" in str(column).lower()
+        and any(token in str(column).lower() for token in ["other", "specif"])
+    )
+    specified_type = specified_disability_type(row, child_other_columns)
+    if specified_type != "None":
+        return specified_type
+    return "Other Disability"
 
 
 def derive_combined_disability_status(row):
@@ -1112,6 +1176,28 @@ def load_data(file_signature):
         st.error(f"Could not read the workbook: {error}")
         st.stop()
 
+    # Consent is an eligibility gate, not a dashboard category. Exclude only
+    # explicit refusals before deriving fields or calculating any result.
+    consent_priority = [
+        "consent",
+        "do_you_consent",
+        "consent_to_participate",
+        "information_statement",
+    ]
+    consent_column = next((column for column in consent_priority if column in records.columns), None)
+    if consent_column is None:
+        consent_column = next(
+            (column for column in records.columns if "consent" in str(column).lower()),
+            None,
+        )
+    if consent_column is not None:
+        records["consent_raw"] = records[consent_column].map(clean_text)
+        records["consent_declined"] = records[consent_column].map(consent_is_declined)
+        records = records.loc[~records["consent_declined"]].copy()
+    else:
+        records["consent_raw"] = pd.NA
+        records["consent_declined"] = False
+
     mapping = None
 
     required_columns = [
@@ -1174,6 +1260,8 @@ def load_data(file_signature):
     records["action_taken_clean"] = records["action_taken"].map(clean_text)
     records["follow_up_required_clean"] = records["follow_up_required"].map(clean_text)
     records["helpdesk_location"] = records.apply(derive_linked_helpdesk_location, axis=1)
+    records["has_disability_raw"] = records["has_disability"].map(clean_text)
+    records["child_disability_type_raw"] = records["child_disability_type"].map(clean_text)
 
     records["adult_wgq_disability_domains"] = records.apply(derive_adult_wgq_disability_domains, axis=1)
     records["adult_additional_disability_category"] = records.apply(derive_adult_additional_disability_category, axis=1)
@@ -1189,6 +1277,20 @@ def load_data(file_signature):
     records["adult_disability_exclusion_risk"] = records.apply(derive_adult_disability_exclusion_risk, axis=1)
 
     records["child_disability_status"] = records.apply(derive_child_disability_status, axis=1)
+    # Apply the correction to the working source field as well as the derived
+    # status. This ensures every downstream KPI, chart, table and export counts
+    # an unsubstantiated child "Other Disability" response alongside No.
+    child_other_without_detail = (
+        records.apply(is_child, axis=1)
+        & records["has_disability_raw"].map(lambda value: normalize_response(value) in ["yes", "y", "true", "1"])
+        & records["child_disability_type_raw"].map(is_other_disability_response)
+        & records.apply(
+            lambda row: specified_disability_type(row, ["child_disability_type_other"]) == "None",
+            axis=1,
+        )
+    )
+    records["child_disability_reclassified_no"] = child_other_without_detail
+    records.loc[child_other_without_detail, "has_disability"] = "No"
     records["child_disability_type"] = records.apply(derive_child_disability_type, axis=1)
     records["disability_status"] = records.apply(derive_combined_disability_status, axis=1)
     records["disability_type"] = records.apply(derive_combined_disability_type, axis=1)
@@ -1957,7 +2059,10 @@ def draw_age_gender_breakdown_bar(
                 axis=alt.Axis(labelFontSize=11),
             ),
             x=alt.X("Records:Q", title="Records", stack="zero"),
-            color=gender_color("Gender:N"),
+            color=gender_color(
+                "Gender:N",
+                available=[gender for gender in GENDER_ORDER if gender in set(long_chart["Gender"].astype(str))],
+            ),
             tooltip=[
                 alt.Tooltip("Age group:N", title="Age group"),
                 alt.Tooltip("Gender:N", title="Gender"),
@@ -2007,7 +2112,11 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
         st.info("No records match the selected filters.")
         return
     chart_data = chart_data.reset_index()
-    gender_columns = [col for col in chart_data.columns if col != category_column]
+    gender_columns = [
+        col
+        for col in chart_data.columns
+        if col != category_column and pd.to_numeric(chart_data[col], errors="coerce").fillna(0).sum() > 0
+    ]
     totals = chart_data.assign(_total=chart_data[gender_columns].sum(axis=1))
     category_order = totals.sort_values("_total", ascending=ascending)[category_column].astype(str).tolist()
     long_chart = chart_data.melt(id_vars=[category_column], value_vars=gender_columns, var_name="Gender", value_name="Records")
@@ -2018,7 +2127,7 @@ def draw_gender_bar(frame, category_column, top_n=None, height=430, ascending=Fa
         .encode(
             y=alt.Y(f"{category_column}:N", sort=category_order, title=None, axis=alt.Axis(labelLimit=700, labelFontSize=11, labelPadding=6)),
             x=alt.X("Records:Q", title="Records", stack="zero"),
-            color=gender_color("Gender:N"),
+            color=gender_color("Gender:N", available=gender_columns),
             tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=",")],
         )
         .properties(height=chart_height)
@@ -2032,7 +2141,11 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
         st.info("No records match the selected filters.")
         return
     chart_data = chart_data.reset_index()
-    gender_columns = [col for col in chart_data.columns if col != category_column]
+    gender_columns = [
+        col
+        for col in chart_data.columns
+        if col != category_column and pd.to_numeric(chart_data[col], errors="coerce").fillna(0).sum() > 0
+    ]
     category_order = chart_data.assign(Total=chart_data[gender_columns].sum(axis=1)).sort_values("Total", ascending=False)[category_column].astype(str).tolist()
     max_chars = 18 if category_column in ["age_group", "helpdesk_location"] else 24
     chart_data["axis_label"] = chart_data[category_column].map(lambda value: short_axis_label(value, max_chars=max_chars))
@@ -2044,7 +2157,7 @@ def draw_gender_column_bar(frame, category_column, top_n=None, height=360):
         .encode(
             x=alt.X("axis_label:N", sort=axis_order, title=None, axis=alt.Axis(labelAngle=-30, labelLimit=150, labelFontSize=10)),
             y=alt.Y("Records:Q", title="Records", stack="zero"),
-            color=gender_color("Gender:N"),
+            color=gender_color("Gender:N", available=gender_columns),
             tooltip=[alt.Tooltip(f"{category_column}:N", title="Category"), alt.Tooltip("Gender:N", title="Gender"), alt.Tooltip("Records:Q", title="Records", format=",")],
         )
         .properties(height=height)
@@ -2358,7 +2471,7 @@ def section_header(title, note=None):
 HELPDESK_SECTION_META = {
     "Overview": ("🏠", "Overview", "Review overall volume, request mix, demographics and location coverage."),
     "CPV Work": ("👥", "Staff / CPV Performance", "Compare staff workload, requests, referrals, follow-up and operating coverage."),
-    "Disability": ("♿", "Disability Inclusion", "Review disability prevalence, impairment types, severity and exclusion risks."),
+    "Disability": ("♿", "Disability Inclusion", "Review disability prevalence, impairment types and single versus multiple impairments."),
     "Concerns": ("🛡️", "Protection Concerns", "Explore reported protection concerns, rankings and age/gender patterns."),
     "Information": ("ℹ️", "Information Requests", "Understand the protection information requested by helpdesk users."),
     "Referrals": ("🔁", "Referrals", "Review referral partners, destinations and demographic patterns."),
@@ -2760,27 +2873,16 @@ def build_helpdesk_findings(section, frame, protection_frame, information_frame,
         if dtype:
             blocks.append(("Impairment profile", f"{dtype} is the most frequently recorded disability type ({dtype_n:,} records). {leaders_by_gender(disability, 'disability_type')}"))
         if not disability.empty:
-            life_stage_counts = value_counts(disability, "derived_life_stage")
-            if not life_stage_counts.empty:
-                life_stage_text = "; ".join(
-                    f"{label}: {int(count):,} ({int(count) / len(disability):.1%})"
-                    for label, count in life_stage_counts.items()
-                )
-                blocks.append(("Life-stage disaggregation", life_stage_text + "."))
             adult_disability = disability[disability["derived_life_stage"].astype(str).eq("Adult")]
-            if not adult_disability.empty:
-                severity, severity_n = leading(adult_disability, "adult_wgq_severity")
-                risk_n = int(
-                    adult_disability["adult_disability_exclusion_risk"]
-                    .astype(str)
-                    .eq("At risk of disability-related exclusion")
-                    .sum()
-                )
-                adult_text = ""
-                if severity:
-                    adult_text += f"{severity} is the leading adult severity category ({severity_n:,} records). "
-                adult_text += f"Exclusion risk is flagged for {risk_n:,} of {len(adult_disability):,} adult disability records ({risk_n / len(adult_disability):.1%})."
-                blocks.append(("Adult WGQ profile", adult_text))
+            adult_people = adult_person_impairment_frame(adult_disability)
+            if not adult_people.empty:
+                multiplicity = value_counts(adult_people, "adult_impairment_multiplicity")
+                single_n = int(multiplicity.get("Single Impairment", 0))
+                multiple_n = int(multiplicity.get("Multiple Impairments", 0))
+                blocks.append((
+                    "Adult impairment multiplicity",
+                    f"Among {len(adult_people):,} adults with disability, {single_n:,} have one impairment and {multiple_n:,} have two or more impairments.",
+                ))
     elif section == "Concerns":
         concern, concern_n = leading(protection_frame, "protection_concern")
         record_n = protection_frame["record_id"].nunique() if "record_id" in protection_frame.columns else 0
@@ -3093,7 +3195,7 @@ selection_pills_html = "".join([
     selection_pill("Gender", selected_genders),
     selection_pill("Age", selected_age_groups),
 ])
-if st.session_state.get("show_current_selection_summary", True):
+if selected_tab == "Overview" and st.session_state.get("show_current_selection_summary", True):
     with st.expander("Current selection summary", expanded=False):
         st.markdown(
             f"""
@@ -3179,12 +3281,7 @@ if selected_tab == "Overview":
     st.subheader("Request Type Table")
     show_gender_table(filtered_records, "request_category", "Request type")
     st.divider()
-    st.subheader("Demographics by gender")
-    st.caption("Information seeker type")
-    draw_gender_column_bar(filtered_records, "information_seeker_type", height=300)
-    show_gender_table(filtered_records, "information_seeker_type", "Information seeker type")
-
-    st.markdown("#### Age group")
+    st.subheader("Age Group by Gender")
     draw_gender_column_bar(filtered_records, "age_group", height=420)
     show_gender_table(filtered_records, "age_group", "Age group")
 
@@ -3217,20 +3314,6 @@ if selected_tab == "Disability":
         'Impairment types are standardized across adults and children.</div>',
         unsafe_allow_html=True,
     )
-
-    # Keep prevalence and life-stage disaggregation visible before narrowing
-    # the remainder of the section to disability-only records.
-    st.markdown("### Disability Prevalence by Gender")
-    draw_gender_column_bar(filtered_records, "disability_status", height=320)
-    show_gender_table(filtered_records, "disability_status", "Disability status")
-
-    disability_life_stage = filtered_records[
-        filtered_records["disability_status"].astype(str).eq("Has Disability")
-    ].copy()
-    if not disability_life_stage.empty:
-        st.markdown("### Disability Records by Life Stage and Gender")
-        draw_gender_column_bar(disability_life_stage, "derived_life_stage", height=300)
-        show_gender_table(disability_life_stage, "derived_life_stage", "Life stage")
 
     st.divider()
 
@@ -3303,58 +3386,19 @@ if selected_tab == "Disability":
                 top_n=None,
             )
 
-            st.caption("Single vs Multiple Impairments")
+            st.caption("Single impairment vs multiple impairments (two or more)")
 
             draw_total_donut(
                 adult_person,
                 "adult_impairment_multiplicity",
-                "Number of impairments",
+                "Impairment multiplicity",
                 height=280,
             )
 
             show_gender_table(
                 adult_person,
                 "adult_impairment_multiplicity",
-                "Number of impairments",
-            )
-
-            st.markdown("#### Adult Impairment Count")
-            draw_gender_column_bar(
-                adult_disability,
-                "adult_wgq_domain_count_category",
-                height=340,
-            )
-            show_gender_table(
-                adult_disability,
-                "adult_wgq_domain_count_category",
-                "Adult impairment count",
-                top_n=None,
-            )
-
-            st.markdown("#### Adult Disability Severity")
-            draw_gender_column_bar(
-                adult_disability,
-                "adult_wgq_severity",
-                height=340,
-            )
-            show_gender_table(
-                adult_disability,
-                "adult_wgq_severity",
-                "Adult disability severity",
-                top_n=None,
-            )
-
-            st.markdown("#### Adult Disability-related Exclusion Risk")
-            draw_gender_column_bar(
-                adult_disability,
-                "adult_disability_exclusion_risk",
-                height=320,
-            )
-            show_gender_table(
-                adult_disability,
-                "adult_disability_exclusion_risk",
-                "Adult exclusion risk",
-                top_n=None,
+                "Impairment multiplicity",
             )
 
         else:
