@@ -18,7 +18,7 @@ DEVELOPER_LOGO_PATH = BASE_DIR / "assets" / "developer-logo.png"
 STYLES_PATH = BASE_DIR / "assets" / "styles.css"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 PROCESSED_CACHE_PATH = BASE_DIR / "data" / "processed" / "helpdesk_processed_cache.pkl"
-PROCESSED_CACHE_VERSION = "2026-06-30-v2"
+PROCESSED_CACHE_VERSION = "2026-07-17-v3"
 
 APP_VERSION = "Version 1.0"
 APP_VERSION_DATE = "June 2026"
@@ -115,7 +115,16 @@ WGQ_DISABILITY_DOMAINS = {
     "difficulty_self_care": "Self-Care Impairment",
     "difficulty_communicating": "Speech Impairment",
 }
-ADULT_DISABILITY_CATEGORY_COLUMNS = ["information_seeker_disability_type_other"]
+ADULT_DISABILITY_CATEGORY_COLUMNS = [
+    "information_seeker_disability_type_other",
+    "information_seeker_disability_type_other_specify",
+    "information_seeker_disability_other_specify",
+]
+CHILD_DISABILITY_OTHER_COLUMNS = [
+    "child_disability_type_other",
+    "child_disability_type_other_specify",
+    "child_disability_other_specify",
+]
 
 DISABILITY_TYPE_STANDARD_MAP = {
     "visual impairment": "Visual Impairment",
@@ -419,19 +428,41 @@ def standardize_disability_type(value):
         return DISABILITY_TYPE_STANDARD_MAP[normalized]
     if "multiple" in normalized:
         return "Multiple Impairments"
-    if "visual" in normalized or "seeing" in normalized:
+    if any(token in normalized for token in ["visual", "seeing", "sight", "blind"]):
         return "Visual Impairment"
-    if "hearing" in normalized:
+    if any(token in normalized for token in ["hearing", "deaf"]):
         return "Hearing Impairment"
-    if any(token in normalized for token in ["physical", "mobility", "walking", "climbing"]):
+    if any(token in normalized for token in ["physical", "mobility", "walking", "climbing", "limb", "paralys", "wheelchair"]):
         return "Physical/Mobility Impairment"
-    if any(token in normalized for token in ["cognitive", "remember", "concentrat", "autism", "adhd", "neurological"]):
+    if any(token in normalized for token in ["cognitive", "remember", "concentrat", "autism", "adhd", "neurological", "intellectual", "mental", "psychosocial", "learning", "epilep"]):
         return "Cognitive Impairment"
     if "self care" in normalized or "self-care" in normalized:
         return "Self-Care Impairment"
-    if "speech" in normalized or "communication" in normalized or "communicat" in normalized:
+    if any(token in normalized for token in ["speech", "communication", "communicat", "mute"]):
         return "Speech Impairment"
     return str(value)
+
+
+def specified_disability_type(row, columns):
+    """Return a usable harmonized value from disability 'Other' detail fields."""
+    generic_values = {
+        "other", "others", "other disability", "other disabilities",
+        "other specify", "other specified", "yes", "y", "true", "1",
+        "none", "none of the above", "not applicable", "n/a", "na", "nil",
+    }
+    for column in columns:
+        if column not in row.index:
+            continue
+        value = clean_text(row.get(column))
+        if pd.isna(value):
+            continue
+        normalized = normalize_response(value)
+        if normalized in generic_values or normalized.startswith("other disability"):
+            continue
+        standardized = standardize_disability_type(value)
+        if standardized != "None":
+            return standardized
+    return "None"
 
 
 def safe_label_from_code(value):
@@ -840,12 +871,7 @@ def derive_adult_wgq_disability_domains(row):
 def derive_adult_additional_disability_category(row):
     if not is_adult(row):
         return "None"
-    for column in ADULT_DISABILITY_CATEGORY_COLUMNS:
-        if column in row.index:
-            standardized_value = standardize_disability_type(row[column])
-            if standardized_value != "None":
-                return standardized_value
-    return "None"
+    return specified_disability_type(row, ADULT_DISABILITY_CATEGORY_COLUMNS)
 
 
 def split_impairment_types(value):
@@ -948,12 +974,13 @@ def derive_child_disability_type(row):
     if not is_child(row) or derive_child_disability_status(row) != "Has Disability":
         return "No Disability"
     disability_type = clean_text(row.get("child_disability_type"))
-    disability_type_other = clean_text(row.get("child_disability_type_other"))
-    invalid = {"other", "others", "other specify", "other specified", "none", "none of the above", "not applicable", "n/a", "na", "nil"}
-    if not pd.isna(disability_type) and normalize_response(disability_type) not in invalid:
+    invalid = {"other", "others", "other disability", "other disabilities", "other specify", "other specified", "none", "none of the above", "not applicable", "n/a", "na", "nil"}
+    normalized_type = normalize_response(disability_type) if not pd.isna(disability_type) else None
+    if normalized_type is not None and normalized_type not in invalid and not normalized_type.startswith("other disability"):
         return standardize_disability_type(disability_type)
-    if not pd.isna(disability_type_other) and normalize_response(disability_type_other) not in invalid:
-        return standardize_disability_type(disability_type_other)
+    specified_type = specified_disability_type(row, CHILD_DISABILITY_OTHER_COLUMNS)
+    if specified_type != "None":
+        return specified_type
     return "Not specified"
 
 
@@ -1108,6 +1135,7 @@ def load_data(file_signature):
     ]
     required_columns.extend(WGQ_DISABILITY_DOMAINS.keys())
     required_columns.extend(ADULT_DISABILITY_CATEGORY_COLUMNS)
+    required_columns.extend(CHILD_DISABILITY_OTHER_COLUMNS)
     for column in required_columns:
         if column not in records.columns:
             records[column] = pd.NA
@@ -2340,12 +2368,12 @@ HELPDESK_SECTION_META = {
 }
 HELPDESK_SECTION_GROUPS = {
     "Summary": ["Overview"],
-    "People & Delivery": ["CPV Work", "Disability"],
-    "Service Requests": ["Concerns", "Information", "Referrals"],
+    "CPVs Submissions": ["CPV Work"],
+    "Service Requests": ["Disability", "Concerns", "Information", "Referrals"],
     "Operations & Data": ["Map", "DQA", "Records"],
 }
 HELPDESK_CATEGORY_LABELS = {
-    "Summary": "📊 Summary", "People & Delivery": "👥 People & Delivery",
+    "Summary": "📊 Summary", "CPVs Submissions": "👥 CPVs Submissions",
     "Service Requests": "🛡️ Service Requests", "Operations & Data": "✅ Operations & Data",
 }
 
@@ -2731,6 +2759,28 @@ def build_helpdesk_findings(section, frame, protection_frame, information_frame,
         blocks.append(("Prevalence", f"Disability is recorded in {len(disability):,} of {total:,} records ({len(disability) / total:.1%}). {positive_gender_rates('disability_status', 'Has Disability', 'a disability')}"))
         if dtype:
             blocks.append(("Impairment profile", f"{dtype} is the most frequently recorded disability type ({dtype_n:,} records). {leaders_by_gender(disability, 'disability_type')}"))
+        if not disability.empty:
+            life_stage_counts = value_counts(disability, "derived_life_stage")
+            if not life_stage_counts.empty:
+                life_stage_text = "; ".join(
+                    f"{label}: {int(count):,} ({int(count) / len(disability):.1%})"
+                    for label, count in life_stage_counts.items()
+                )
+                blocks.append(("Life-stage disaggregation", life_stage_text + "."))
+            adult_disability = disability[disability["derived_life_stage"].astype(str).eq("Adult")]
+            if not adult_disability.empty:
+                severity, severity_n = leading(adult_disability, "adult_wgq_severity")
+                risk_n = int(
+                    adult_disability["adult_disability_exclusion_risk"]
+                    .astype(str)
+                    .eq("At risk of disability-related exclusion")
+                    .sum()
+                )
+                adult_text = ""
+                if severity:
+                    adult_text += f"{severity} is the leading adult severity category ({severity_n:,} records). "
+                adult_text += f"Exclusion risk is flagged for {risk_n:,} of {len(adult_disability):,} adult disability records ({risk_n / len(adult_disability):.1%})."
+                blocks.append(("Adult WGQ profile", adult_text))
     elif section == "Concerns":
         concern, concern_n = leading(protection_frame, "protection_concern")
         record_n = protection_frame["record_id"].nunique() if "record_id" in protection_frame.columns else 0
@@ -3059,37 +3109,51 @@ if st.session_state.get("show_current_selection_summary", True):
             unsafe_allow_html=True,
         )
 
-kpi_group_caption("Volume, staffing & request mix — request types are mutually exclusive")
-mix_cols = st.columns(4)
-show_kpi_card(mix_cols[0], "Staff No.", format_number(staff_no), "Unique harmonized CPVs in current selection", accent="#2F7D69")
-show_kpi_card(mix_cols[1], "Valid records", format_number(total_records), f"of {format_number(all_records)} in source", accent="#2F7D69")
-show_kpi_card(mix_cols[2], "Protection concerns", format_number(protection_records), f"{format_rate(protection_records, total_records)} of requests", share=safe_share(protection_records, total_records), accent="#2563EB")
-show_kpi_card(mix_cols[3], "Information requests", format_number(information_records), f"{format_rate(information_records, total_records)} of requests", share=safe_share(information_records, total_records), accent="#2563EB")
-
-kpi_group_caption("Case outcomes — overlapping subsets of records")
-outcome_cols = st.columns(3)
-show_kpi_card(outcome_cols[0], "Partner referrals", format_number(partner_referrals), f"{format_rate(partner_referrals, total_records)} of all records", share=safe_share(partner_referrals, total_records), accent="#2F7D69")
-show_kpi_card(outcome_cols[1], "Follow-up required", format_number(follow_up), f"{format_rate(follow_up, total_records)} of all records", share=safe_share(follow_up, total_records), accent="#D9A441")
-show_kpi_card(outcome_cols[2], "Disability records", format_number(disability_records), f"{format_rate(disability_records, total_records)} of all records", share=safe_share(disability_records, total_records), accent="#7C3AED")
-
 if filtered_records.empty:
     st.info("No records match the selected filters.")
     show_footer()
     st.stop()
 
-# Quick insights
-disability_type_records = filtered_records[filtered_records["disability_status"].eq("Has Disability")]
-follow_up_records = filtered_records[filtered_records["follow_up_required_clean"].eq("Yes")]
-top_location, top_location_count = top_value(filtered_records, "helpdesk_location")
-top_concern, top_concern_count = top_value(filtered_protection, "protection_concern")
-top_disability, top_disability_count = top_value(disability_type_records, "disability_type")
-top_followup_site, top_followup_site_count = top_value(follow_up_records, "helpdesk_location")
-section_header("Quick Insights", "Leading categories within each dimension.")
-insight_cols = st.columns(4)
-show_insight_card(insight_cols[0], "Busiest helpdesk", top_location, insight_detail(top_location_count, total_records, denom_label="all records"), icon="🏢", count=top_location_count)
-show_insight_card(insight_cols[1], "Top protection concern", top_concern, insight_detail(top_concern_count, len(filtered_protection), unit="mentions", denom_label="concerns"), icon="🛡️", count=top_concern_count)
-show_insight_card(insight_cols[2], "Most common impairment", top_disability, insight_detail(top_disability_count, len(disability_type_records), denom_label="disability records"), icon="♿", count=top_disability_count)
-show_insight_card(insight_cols[3], "Most follow-up activity", top_followup_site, insight_detail(top_followup_site_count, len(follow_up_records), unit="follow-ups", denom_label="follow-ups"), icon="🔄", count=top_followup_site_count)
+# Keep the overview as a true landing page. Global KPIs and quick insights are
+# deliberately omitted from analytical sections so users reach their data
+# immediately without repeatedly scrolling past the same summary cards.
+if selected_tab == "Overview":
+    kpi_group_caption("Volume, staffing & request mix — request types are mutually exclusive")
+    mix_cols = st.columns(4)
+    show_kpi_card(mix_cols[0], "Staff No.", format_number(staff_no), "Unique harmonized CPVs in current selection", accent="#2F7D69")
+    show_kpi_card(mix_cols[1], "Valid records", format_number(total_records), f"of {format_number(all_records)} in source", accent="#2F7D69")
+    show_kpi_card(mix_cols[2], "Protection concerns", format_number(protection_records), f"{format_rate(protection_records, total_records)} of requests", share=safe_share(protection_records, total_records), accent="#2563EB")
+    show_kpi_card(mix_cols[3], "Information requests", format_number(information_records), f"{format_rate(information_records, total_records)} of requests", share=safe_share(information_records, total_records), accent="#2563EB")
+
+    kpi_group_caption("Case outcomes — overlapping subsets of records")
+    outcome_cols = st.columns(3)
+    show_kpi_card(outcome_cols[0], "Partner referrals", format_number(partner_referrals), f"{format_rate(partner_referrals, total_records)} of all records", share=safe_share(partner_referrals, total_records), accent="#2F7D69")
+    show_kpi_card(outcome_cols[1], "Follow-up required", format_number(follow_up), f"{format_rate(follow_up, total_records)} of all records", share=safe_share(follow_up, total_records), accent="#D9A441")
+    show_kpi_card(outcome_cols[2], "Disability records", format_number(disability_records), f"{format_rate(disability_records, total_records)} of all records", share=safe_share(disability_records, total_records), accent="#7C3AED")
+
+    disability_type_records = filtered_records[filtered_records["disability_status"].eq("Has Disability")]
+    follow_up_records = filtered_records[filtered_records["follow_up_required_clean"].eq("Yes")]
+    top_location, top_location_count = top_value(filtered_records, "helpdesk_location")
+    top_concern, top_concern_count = top_value(filtered_protection, "protection_concern")
+    top_disability, top_disability_count = top_value(disability_type_records, "disability_type")
+    top_followup_site, top_followup_site_count = top_value(follow_up_records, "helpdesk_location")
+    section_header("Quick Insights", "Leading categories within each dimension.")
+    insight_cols = st.columns(4)
+    show_insight_card(insight_cols[0], "Busiest helpdesk", top_location, insight_detail(top_location_count, total_records, denom_label="all records"), icon="🏢", count=top_location_count)
+    show_insight_card(insight_cols[1], "Top protection concern", top_concern, insight_detail(top_concern_count, len(filtered_protection), unit="mentions", denom_label="concerns"), icon="🛡️", count=top_concern_count)
+    show_insight_card(insight_cols[2], "Most common impairment", top_disability, insight_detail(top_disability_count, len(disability_type_records), denom_label="disability records"), icon="♿", count=top_disability_count)
+    show_insight_card(insight_cols[3], "Most follow-up activity", top_followup_site, insight_detail(top_followup_site_count, len(follow_up_records), unit="follow-ups", denom_label="follow-ups"), icon="🔄", count=top_followup_site_count)
+else:
+    st.markdown(
+        f"""
+        <div class="section-context-strip" aria-label="Current analytical context">
+            <span><strong>{format_number(total_records)}</strong> records in view</span>
+            <span>{escape_text(from_date.strftime('%d %b %Y'))} &ndash; {escape_text(to_date.strftime('%d %b %Y'))}</span>
+            <span>{active_filter_count} filter group{'s' if active_filter_count != 1 else ''} active</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.divider()
 helpdesk_section_intro(selected_tab, total_records)
@@ -3153,6 +3217,22 @@ if selected_tab == "Disability":
         'Impairment types are standardized across adults and children.</div>',
         unsafe_allow_html=True,
     )
+
+    # Keep prevalence and life-stage disaggregation visible before narrowing
+    # the remainder of the section to disability-only records.
+    st.markdown("### Disability Prevalence by Gender")
+    draw_gender_column_bar(filtered_records, "disability_status", height=320)
+    show_gender_table(filtered_records, "disability_status", "Disability status")
+
+    disability_life_stage = filtered_records[
+        filtered_records["disability_status"].astype(str).eq("Has Disability")
+    ].copy()
+    if not disability_life_stage.empty:
+        st.markdown("### Disability Records by Life Stage and Gender")
+        draw_gender_column_bar(disability_life_stage, "derived_life_stage", height=300)
+        show_gender_table(disability_life_stage, "derived_life_stage", "Life stage")
+
+    st.divider()
 
     # Strict disability-only slice for the entire tab.
     # This is the controlling filter for every chart/table in this menu.
@@ -3236,6 +3316,45 @@ if selected_tab == "Disability":
                 adult_person,
                 "adult_impairment_multiplicity",
                 "Number of impairments",
+            )
+
+            st.markdown("#### Adult Impairment Count")
+            draw_gender_column_bar(
+                adult_disability,
+                "adult_wgq_domain_count_category",
+                height=340,
+            )
+            show_gender_table(
+                adult_disability,
+                "adult_wgq_domain_count_category",
+                "Adult impairment count",
+                top_n=None,
+            )
+
+            st.markdown("#### Adult Disability Severity")
+            draw_gender_column_bar(
+                adult_disability,
+                "adult_wgq_severity",
+                height=340,
+            )
+            show_gender_table(
+                adult_disability,
+                "adult_wgq_severity",
+                "Adult disability severity",
+                top_n=None,
+            )
+
+            st.markdown("#### Adult Disability-related Exclusion Risk")
+            draw_gender_column_bar(
+                adult_disability,
+                "adult_disability_exclusion_risk",
+                height=320,
+            )
+            show_gender_table(
+                adult_disability,
+                "adult_disability_exclusion_risk",
+                "Adult exclusion risk",
+                top_n=None,
             )
 
         else:
