@@ -155,7 +155,17 @@
 .block-container {
     padding-top: 1.2rem;
     padding-bottom: 2rem;
-    max-width: 1500px;
+    padding-left: clamp(1rem, 1.8vw, 2rem) !important;
+    padding-right: clamp(1rem, 1.8vw, 2rem) !important;
+    max-width: 1800px;
+    width: 100%;
+}
+
+@media (max-width: 700px) {
+    .block-container {
+        padding-left: 0.85rem !important;
+        padding-right: 0.85rem !important;
+    }
 }
 
 /* Keep intentional subsection separators readable without Streamlit's
@@ -750,7 +760,24 @@ html { scroll-behavior: smooth; }
    ========================================================================== */
 
 section[data-testid="stSidebar"] {
-    padding-top: 1rem;
+    padding-top: 0;
+}
+
+/* Streamlit applies its large default top inset to the inner user-content
+   wrapper, not the outer sidebar. Keep the controls near the top while
+   retaining enough clearance for the sidebar collapse control. */
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+    padding-top: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
+    height: 3rem !important;
+    min-height: 3rem !important;
+    margin-bottom: 0 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 0.5rem !important;
 }
 
 /* Filter status header */
