@@ -4008,6 +4008,35 @@ if selected_tab == "Concerns":
                 "Protection concern",
             )
 
+    st.markdown("#### Disability Prevalence by Age Group")
+    st.caption(
+        "Distribution of unique protection-concern records with a recorded disability. "
+        "Records without disability are excluded."
+    )
+    protection_disability_by_age = filtered_records[
+        filtered_records["request_category"].astype(str).eq(
+            "Reporting a protection concern"
+        )
+        & filtered_records["disability_status"].astype(str).eq("Has Disability")
+    ].copy()
+    if "record_id" in protection_disability_by_age.columns:
+        protection_disability_by_age = protection_disability_by_age.drop_duplicates(
+            subset=["record_id"],
+            keep="first",
+        )
+
+    if protection_disability_by_age.empty:
+        st.info(
+            "No protection-concern records with disability match the current filters."
+        )
+    else:
+        show_gender_table(
+            protection_disability_by_age,
+            "age_group",
+            "Age group",
+            top_n=None,
+        )
+
 if selected_tab == "Information":
     st.subheader("Top General Information Needs by Gender")
     information_rank = st.radio("Rank", ["Highest values", "Lowest values"], horizontal=True, index=0, key="information_rank")
@@ -4079,6 +4108,40 @@ if selected_tab == "Referrals":
                 selected_referral_partners_for_age,
                 "Referral partner",
             )
+
+    st.markdown("#### Disability Prevalence by Age Group")
+    st.caption(
+        "Distribution of unique partner-referred cases with a recorded partner "
+        "and disability. Records without disability are excluded."
+    )
+    referral_record_ids = (
+        set(filtered_referrals["record_id"].dropna().astype(str))
+        if "record_id" in filtered_referrals.columns
+        else set()
+    )
+    referral_disability_by_age = filtered_records[
+        filtered_records["record_id"].astype(str).isin(referral_record_ids)
+        & filtered_records["referral_status"].astype(str).eq(
+            "Referred to partner agency"
+        )
+        & filtered_records["disability_status"].astype(str).eq("Has Disability")
+    ].copy()
+    referral_disability_by_age = referral_disability_by_age.drop_duplicates(
+        subset=["record_id"],
+        keep="first",
+    )
+
+    if referral_disability_by_age.empty:
+        st.info(
+            "No partner-referred cases with disability match the current filters."
+        )
+    else:
+        show_gender_table(
+            referral_disability_by_age,
+            "age_group",
+            "Age group",
+            top_n=None,
+        )
 
 if selected_tab == "Map":
     st.subheader("Helpdesk Locations Map")
