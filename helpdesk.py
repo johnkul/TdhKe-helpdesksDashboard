@@ -18,7 +18,7 @@ DEVELOPER_LOGO_PATH = BASE_DIR / "assets" / "developer-logo.png"
 STYLES_PATH = BASE_DIR / "assets" / "styles.css"
 DATA_FILE_PATH = BASE_DIR / "data" / "HELPDESK_DashboardData_Tdh_Kenya_D2.xlsx"
 PROCESSED_CACHE_PATH = BASE_DIR / "data" / "processed" / "helpdesk_processed_cache.pkl"
-PROCESSED_CACHE_VERSION = "2026-07-18-v21"
+PROCESSED_CACHE_VERSION = "2026-07-23-v23"
 
 APP_VERSION = "Version 1.0"
 APP_VERSION_DATE = "June 2026"
@@ -64,6 +64,13 @@ CHILD_AGE_GROUPS = {"0-5 Years", "6-11 Years", "12-17 Years"}
 ADULT_AGE_GROUPS = {"18-35 Years", "36-49 Years", "50-64 Years", "65 Years and Above"}
 
 GENDER_ORDER = ["Girl", "Boy", "Woman", "Man", "Transgender", "[Missing]"]
+VISIT_HISTORY_ORDER = ["First-time visitor", "Repeat visitor", "[Missing]"]
+REPEAT_VISIT_TIMING_ORDER = [
+    "Repeat — within current month",
+    "Repeat — before current month",
+    "Repeat — timing not recorded",
+]
+CHILD_ACCOMPANIMENT_ORDER = ["Unaccompanied", "Not unaccompanied", "[Missing]"]
 GENDER_COLORS = {
     "Girl": "#8B5CF6",
     "Boy": "#2563EB",
@@ -193,6 +200,16 @@ CORE_RECORD_COLUMNS = [
     "information_seeker_gender_raw",
     "type_age_correction_flag",
     "gender_age_correction_flag",
+    "helpdesk_visit_history",
+    "visited_tdh_helpdesk_before_raw",
+    "repeat_visit_timing",
+    "last_visit_within_current_month_raw",
+    "visit_history_consistency",
+    "visit_history_inconsistency_flag",
+    "child_accompaniment_status",
+    "child_unaccompanied_minor_raw",
+    "respondent_relationship_to_child_raw",
+    "respondent_relationship_other_raw",
     "disability_status",
     "disability_type",
     "adult_wgq_disability_status",
@@ -287,6 +304,103 @@ def consent_is_declined(value):
         "refuse", "not consented", "do not consent", "dont consent",
         "i do not consent", "i dont consent", "consent not given",
     }
+
+
+def derive_helpdesk_visit_history(value):
+    """Classify prior-helpdesk responses into first-time versus repeat visits."""
+    normalized = normalize_response(value)
+    if normalized is None:
+        return "[Missing]"
+    if normalized in {
+        "yes", "y", "1", "true", "visited before", "yes visited before",
+        "repeat", "repeat visit", "returning", "returning visitor",
+    }:
+        return "Repeat visitor"
+    if normalized in {
+        "no", "n", "0", "false", "not visited before", "never visited",
+        "first time", "first visit", "new visitor",
+    }:
+        return "First-time visitor"
+    if any(term in normalized for term in ["first time", "never visited", "not visited before"]):
+        return "First-time visitor"
+    if any(term in normalized for term in ["repeat", "returning", "visited before"]):
+        return "Repeat visitor"
+    return "[Missing]"
+
+
+def yes_no_response(value):
+    """Return True/False for a clear yes/no response, otherwise None."""
+    normalized = normalize_response(value)
+    if normalized in {"yes", "y", "1", "true"}:
+        return True
+    if normalized in {"no", "n", "0", "false"}:
+        return False
+    return None
+
+
+def derive_repeat_visit_timing(row):
+    """Use the follow-up question only for confirmed repeat visitors."""
+    visit_history = row.get("helpdesk_visit_history")
+    within_month = yes_no_response(row.get("last_visit_within_current_month"))
+    if visit_history != "Repeat visitor":
+        return pd.NA
+    if within_month is True:
+        return "Repeat — within current month"
+    if within_month is False:
+        return "Repeat — before current month"
+    return "Repeat — timing not recorded"
+
+
+def derive_visit_history_consistency(row):
+    """Audit skip logic between prior-visit and last-visit timing fields."""
+    visit_history = row.get("helpdesk_visit_history")
+    within_month = yes_no_response(row.get("last_visit_within_current_month"))
+    if visit_history == "First-time visitor" and within_month is not None:
+        return "Review — first-time visitor has a last-visit response"
+    if visit_history == "Repeat visitor" and within_month is None:
+        return "Review — repeat visit timing is missing"
+    if visit_history == "[Missing]" and within_month is not None:
+        return "Review — visit history missing but timing was answered"
+    if visit_history == "[Missing]":
+        return "Visit history missing"
+    return "Consistent"
+
+
+def derive_child_accompaniment_status(row):
+    """Harmonize unaccompanied-child status from direct and relationship fields."""
+    if not is_child(row):
+        return "[Missing]"
+
+    direct = normalize_response(row.get("child_unaccompanied_minor"))
+    if direct in {"yes", "y", "1", "true", "unaccompanied", "unaccompanied minor"}:
+        return "Unaccompanied"
+    if direct in {"no", "n", "0", "false", "accompanied", "not unaccompanied"}:
+        return "Not unaccompanied"
+
+    relationship_values = [
+        normalize_response(row.get("respondent_relationship_to_child")),
+        normalize_response(row.get("respondent_relationship_other")),
+    ]
+    relationship = " ".join(value for value in relationship_values if value)
+    if not relationship:
+        return "[Missing]"
+
+    unaccompanied_terms = [
+        "unaccompanied", "alone", "no caregiver", "without caregiver",
+        "without parent",
+    ]
+    accompanied_terms = [
+        "mother", "father", "parent", "caregiver", "guardian", "aunt",
+        "uncle", "grandmother", "grandfather", "grandparent", "brother",
+        "sister", "sibling", "relative", "stepmother", "stepfather",
+    ]
+    if any(term in relationship for term in unaccompanied_terms):
+        return "Unaccompanied"
+    if any(term in relationship for term in accompanied_terms):
+        return "Not unaccompanied"
+    if relationship.strip() in {"self", "child", "the child", "beneficiary"}:
+        return "Unaccompanied"
+    return "[Missing]"
 
 
 def staff_name_key(value):
@@ -1501,6 +1615,11 @@ def load_data(file_signature):
         "information_seeker_age",
         "information_seeker_type",
         "information_seeker_gender",
+        "visited_tdh_helpdesk_before",
+        "last_visit_within_current_month",
+        "child_unaccompanied_minor",
+        "respondent_relationship_to_child",
+        "respondent_relationship_other",
         "request_type_protection_or_information",
         "action_taken",
         "follow_up_required",
@@ -1544,6 +1663,39 @@ def load_data(file_signature):
     records["gender_age_correction_flag"] = records["information_seeker_gender_raw"].fillna("[Missing]") != records[
         "information_seeker_gender"
     ].fillna("[Missing]")
+    records["visited_tdh_helpdesk_before_raw"] = records[
+        "visited_tdh_helpdesk_before"
+    ].map(clean_text)
+    records["helpdesk_visit_history"] = records[
+        "visited_tdh_helpdesk_before"
+    ].map(derive_helpdesk_visit_history)
+    records["last_visit_within_current_month_raw"] = records[
+        "last_visit_within_current_month"
+    ].map(clean_text)
+    records["repeat_visit_timing"] = records.apply(
+        derive_repeat_visit_timing,
+        axis=1,
+    )
+    records["visit_history_consistency"] = records.apply(
+        derive_visit_history_consistency,
+        axis=1,
+    )
+    records["visit_history_inconsistency_flag"] = records[
+        "visit_history_consistency"
+    ].astype(str).str.startswith("Review")
+    records["child_unaccompanied_minor_raw"] = records[
+        "child_unaccompanied_minor"
+    ].map(clean_text)
+    records["respondent_relationship_to_child_raw"] = records[
+        "respondent_relationship_to_child"
+    ].map(clean_text)
+    records["respondent_relationship_other_raw"] = records[
+        "respondent_relationship_other"
+    ].map(clean_text)
+    records["child_accompaniment_status"] = records.apply(
+        derive_child_accompaniment_status,
+        axis=1,
+    )
 
     records["request_category"] = records["request_type_protection_or_information"].map(clean_text)
     records["action_taken_clean"] = records["action_taken"].map(clean_text)
@@ -1790,6 +1942,11 @@ def load_data(file_signature):
                 "adult_multiple_impairment_records",
                 "gender_age_corrected_records",
                 "type_age_corrected_records",
+                "first_time_visitor_records",
+                "repeat_visitor_records",
+                "repeat_visits_within_current_month",
+                "visit_history_inconsistency_records",
+                "unaccompanied_child_records",
             ],
             "value": [
                 len(dashboard_records),
@@ -1805,6 +1962,11 @@ def load_data(file_signature):
                 dashboard_records["adult_wgq_multiplicity"].eq("Multiple Impairments").sum(),
                 dashboard_records["gender_age_correction_flag"].sum(),
                 dashboard_records["type_age_correction_flag"].sum(),
+                dashboard_records["helpdesk_visit_history"].eq("First-time visitor").sum(),
+                dashboard_records["helpdesk_visit_history"].eq("Repeat visitor").sum(),
+                dashboard_records["repeat_visit_timing"].eq("Repeat — within current month").sum(),
+                dashboard_records["visit_history_inconsistency_flag"].sum(),
+                dashboard_records["child_accompaniment_status"].eq("Unaccompanied").sum(),
             ],
         }
     )
@@ -3358,6 +3520,30 @@ def build_helpdesk_findings(section, frame, protection_frame, information_frame,
         if age:
             profile += f", while {age} is the largest age group at {age_n:,} ({age_n / total:.1%})"
         blocks.append(("Request and demographic profile", profile + ". " + gender_distribution()))
+        visit_counts = value_counts(frame, "helpdesk_visit_history")
+        known_visits = int(visit_counts.sum())
+        first_time = int(visit_counts.get("First-time visitor", 0))
+        repeat = int(visit_counts.get("Repeat visitor", 0))
+        if known_visits:
+            repeat_timing = value_counts(frame, "repeat_visit_timing")
+            within_month = int(repeat_timing.get("Repeat — within current month", 0))
+            timed_repeats = int(
+                repeat_timing.get("Repeat — within current month", 0)
+                + repeat_timing.get("Repeat — before current month", 0)
+            )
+            timing_sentence = (
+                f" Of {timed_repeats:,} repeat visits with recorded timing, "
+                f"{within_month:,} occurred within the current month "
+                f"({within_month / timed_repeats:.1%})."
+                if timed_repeats else ""
+            )
+            blocks.append((
+                "Helpdesk entry point",
+                f"Among {known_visits:,} records with known prior-visit status, "
+                f"{first_time:,} were first-time visitors ({first_time / known_visits:.1%}) "
+                f"and {repeat:,} were repeat visitors ({repeat / known_visits:.1%})."
+                f"{timing_sentence}",
+            ))
     elif section == "CPV Work":
         summary = cpv_work_summary(frame)
         if not summary.empty:
@@ -3388,6 +3574,16 @@ def build_helpdesk_findings(section, frame, protection_frame, information_frame,
         blocks.append(("Concern profile", f"The tables contain {len(protection_frame):,} concern mentions across {record_n:,} records. {concern} is highest at {concern_n:,} mentions." if concern else "No usable protection-concern mentions remain."))
         if concern:
             blocks.append(("Gender pattern", leaders_by_gender(protection_frame, "protection_concern", "mentions")))
+        children = frame[frame["derived_life_stage"].astype(str).eq("Child")]
+        accompaniment = value_counts(children, "child_accompaniment_status")
+        known_children = int(accompaniment.sum())
+        unaccompanied = int(accompaniment.get("Unaccompanied", 0))
+        if known_children:
+            blocks.append((
+                "Child accompaniment",
+                f"Among {known_children:,} child records with a determinable accompaniment status, "
+                f"{unaccompanied:,} were unaccompanied ({unaccompanied / known_children:.1%}).",
+            ))
     elif section == "Information":
         need, need_n = leading(information_frame, "general_information_need")
         record_n = information_frame["record_id"].nunique() if "record_id" in information_frame.columns else 0
@@ -3685,6 +3881,11 @@ information_records = filtered_records["request_category"].eq("Seeking general p
 partner_referrals = filtered_records["referral_status"].eq("Referred to partner agency").sum()
 follow_up = filtered_records["follow_up_required_clean"].eq("Yes").sum()
 disability_records = filtered_records["disability_status"].eq("Has Disability").sum()
+known_visit_records = filtered_records[
+    filtered_records["helpdesk_visit_history"].isin(["First-time visitor", "Repeat visitor"])
+]
+first_time_visitors = known_visit_records["helpdesk_visit_history"].eq("First-time visitor").sum()
+repeat_visitors = known_visit_records["helpdesk_visit_history"].eq("Repeat visitor").sum()
 if "staff_name" in filtered_records.columns:
     harmonized_staff = filtered_records["staff_name"].map(normalize_staff_name)
     staff_no = int(harmonized_staff[harmonized_staff.ne("[Not recorded]")].nunique())
@@ -3749,6 +3950,11 @@ if selected_tab == "Overview":
     show_kpi_card(outcome_cols[1], "Follow-up required", format_number(follow_up), f"{format_rate(follow_up, total_records)} of all records", share=safe_share(follow_up, total_records), accent="#D9A441")
     show_kpi_card(outcome_cols[2], "Disability records", format_number(disability_records), f"{format_rate(disability_records, total_records)} of all records", share=safe_share(disability_records, total_records), accent="#7C3AED")
 
+    kpi_group_caption("Helpdesk entry point — prior visit history")
+    entry_cols = st.columns(2)
+    show_kpi_card(entry_cols[0], "First-time visitors", format_number(first_time_visitors), f"{format_rate(first_time_visitors, len(known_visit_records))} of records with known visit history", share=safe_share(first_time_visitors, len(known_visit_records)), accent="#1F6FB2")
+    show_kpi_card(entry_cols[1], "Repeat visitors", format_number(repeat_visitors), f"{format_rate(repeat_visitors, len(known_visit_records))} of records with known visit history", share=safe_share(repeat_visitors, len(known_visit_records)), accent="#D9A441")
+
     disability_type_records = filtered_records[filtered_records["disability_status"].eq("Has Disability")]
     follow_up_records = filtered_records[filtered_records["follow_up_required_clean"].eq("Yes")]
     top_location, top_location_count = top_value(filtered_records, "helpdesk_location")
@@ -3795,6 +4001,37 @@ if selected_tab == "Overview":
 
     st.subheader("Request Type Table")
     show_gender_table(filtered_records, "request_category", "Request type")
+
+    st.divider()
+    st.subheader("First-time and Repeat Helpdesk Visits")
+    st.caption(
+        '"visited_tdh_helpdesk_before" establishes first-time versus repeat status. '
+        '"last_visit_within_current_month" is then applied only to repeat visitors.'
+    )
+    if known_visit_records.empty:
+        st.info("No usable prior-visit responses match the selected filters.")
+    else:
+        draw_gender_column_bar(known_visit_records, "helpdesk_visit_history", height=300)
+        show_gender_table(known_visit_records, "helpdesk_visit_history", "Visit history")
+
+        repeat_visit_records = known_visit_records[
+            known_visit_records["helpdesk_visit_history"].eq("Repeat visitor")
+        ].copy()
+        st.markdown("#### Repeat Visit Timing")
+        if repeat_visit_records.empty:
+            st.info("No repeat visitors match the selected filters.")
+        else:
+            draw_gender_column_bar(
+                repeat_visit_records,
+                "repeat_visit_timing",
+                height=300,
+            )
+            show_gender_table(
+                repeat_visit_records,
+                "repeat_visit_timing",
+                "Repeat visit timing",
+            )
+
     st.divider()
     st.subheader("Age Group by Gender")
     draw_gender_column_bar(filtered_records, "age_group", height=420)
@@ -4036,6 +4273,47 @@ if selected_tab == "Concerns":
                     "Age group",
                     top_n=None,
                 )
+
+    st.divider()
+    st.markdown("#### Child Accompaniment Status")
+    st.caption(
+        'Prioritizes "child_unaccompanied_minor". Where that field is blank, '
+        "the respondent relationship fields are used only when they clearly "
+        "identify an unaccompanied child or a caregiver."
+    )
+    child_accompaniment = filtered_records[
+        filtered_records["derived_life_stage"].astype(str).eq("Child")
+        & filtered_records["child_accompaniment_status"].isin(
+            ["Unaccompanied", "Not unaccompanied"]
+        )
+    ].copy()
+    if child_accompaniment.empty:
+        st.info("No determinable child accompaniment records match the selected filters.")
+    else:
+        draw_gender_column_bar(
+            child_accompaniment,
+            "child_accompaniment_status",
+            height=300,
+        )
+        show_gender_table(
+            child_accompaniment,
+            "child_accompaniment_status",
+            "Accompaniment status",
+        )
+
+        unaccompanied_children = child_accompaniment[
+            child_accompaniment["child_accompaniment_status"].eq("Unaccompanied")
+        ]
+        st.markdown("##### Unaccompanied Children by Age Group")
+        if unaccompanied_children.empty:
+            st.info("No unaccompanied children match the selected filters.")
+        else:
+            show_gender_table(
+                unaccompanied_children,
+                "age_group",
+                "Age group",
+                top_n=None,
+            )
 
 if selected_tab == "Information":
     st.subheader("Top General Information Needs by Gender")
@@ -4347,6 +4625,24 @@ if selected_tab == "DQA":
     st.dataframe(style_records_table(missing_table), use_container_width=True, hide_index=True)
 
     st.divider()
+    st.markdown("### Helpdesk visit-history consistency")
+    st.caption(
+        'Checks the dependency between "visited_tdh_helpdesk_before" and '
+        '"last_visit_within_current_month". The timing question should only be '
+        "answered for repeat visitors."
+    )
+    visit_consistency_table = basic_count_table(
+        filtered_records,
+        "visit_history_consistency",
+        "Consistency result",
+    )
+    render_dashboard_table(
+        visit_consistency_table,
+        label_column="Consistency result",
+        max_height=360,
+    )
+
+    st.divider()
     st.markdown("### Protected education-concern follow-up table")
     st.markdown(
         '<div class="section-note">Includes records where concern_educational_support and/or concern_school_dropout_risk_or_dropped_out was selected. This table contains PII and requires a password.</div>',
@@ -4423,3 +4719,5 @@ if selected_tab == "Records":
         st.dataframe(style_records_table(kpis), use_container_width=True, hide_index=True)
 
 show_footer()
+
+
